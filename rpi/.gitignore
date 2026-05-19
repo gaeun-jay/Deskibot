@@ -1,0 +1,7 @@
+comm/serviceAccountKey.json
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.log
+detection/efficientdet_lite0.tflite
