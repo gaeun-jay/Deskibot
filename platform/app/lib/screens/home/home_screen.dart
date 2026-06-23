@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:deskibot/models/todo_model.dart';
+import 'package:deskibot/models/user_model.dart';
 import 'package:deskibot/services/auth_service.dart';
+import 'package:deskibot/services/todo_service.dart';
+import 'package:deskibot/services/user_service.dart';
 import 'package:deskibot/screens/auth/login_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -10,29 +14,148 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  String? _name;
+  List<Category> _categories = [];
+  late final Stream<List<TodoModel>> _todosStream;
+
+  bool _showForm = false;
+  final _contentController = TextEditingController();
+  String? _selectedCategoryId;
+  DateTime _selectedDate = DateTime.now();
+  TimeOfDay? _selectedTime;
+  String _notifyOption = '없음';
 
   @override
   void initState() {
     super.initState();
-    _loadName();
+    _todosStream = TodoService().getTodayTodos();
+    _loadData();
   }
 
-  Future<void> _loadName() async {
-    final name = await AuthService().getCurrentName();
+  @override
+  void dispose() {
+    _contentController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadData() async {
+    final categories = await UserService().getCategories();
     if (!mounted) return;
-    setState(() => _name = name);
+    setState(() => _categories = categories);
   }
 
-  String get _displayName {
-    final name = _name;
-    if (name == null || name.isEmpty) return '';
-    return name.length <= 2 ? name : name.substring(0, 2);
+  String _formatTodayHeader() {
+    const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+    final now = DateTime.now();
+    return '${now.year}년 ${now.month}월 ${now.day}일 ${weekdays[now.weekday - 1]}요일';
   }
 
-  Future<void> _onLogout(BuildContext context) async {
+  String _formatDate(DateTime date) {
+    return '${date.year}. ${date.month.toString().padLeft(2, '0')}. ${date.day.toString().padLeft(2, '0')}.';
+  }
+
+  String _dateToStr(DateTime date) {
+    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+  }
+
+  String _timeStr() {
+    if (_selectedTime == null) return '--:--';
+    return '${_selectedTime!.hour.toString().padLeft(2, '0')}:${_selectedTime!.minute.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _pickTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _selectedTime ?? TimeOfDay.now(),
+    );
+    if (picked != null) setState(() => _selectedTime = picked);
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2035),
+    );
+    if (picked != null) setState(() => _selectedDate = picked);
+  }
+
+  void _closeForm() {
+    _contentController.clear();
+    setState(() {
+      _showForm = false;
+      _selectedCategoryId = null;
+      _selectedDate = DateTime.now();
+      _selectedTime = null;
+      _notifyOption = '없음';
+    });
+  }
+
+  Future<void> _addTodo() async {
+    final content = _contentController.text.trim();
+    if (content.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('할일 내용을 입력해주세요')),
+      );
+      return;
+    }
+
+    final timeStr = _selectedTime == null ? null : _timeStr();
+    bool notify = false;
+    String? deadlineTime;
+    int? notifyBefore;
+
+    if (_notifyOption == '마감 당일 아침 9시') {
+      notify = true;
+      deadlineTime = '09:00';
+    } else if (_notifyOption == '마감 30분 전') {
+      notify = true;
+      notifyBefore = 30;
+      deadlineTime = timeStr;
+    }
+
+    final todo = TodoModel(
+      id: '',
+      content: content,
+      categoryId: _selectedCategoryId,
+      date: _dateToStr(_selectedDate),
+      time: timeStr,
+      hasTime: _selectedTime != null,
+      notify: notify,
+      deadlineTime: deadlineTime,
+      notifyBefore: notifyBefore,
+      isDone: false,
+    );
+
+    await TodoService().addTodo(todo);
+    if (!mounted) return;
+    _closeForm();
+  }
+
+  Future<void> _showDeleteDialog(String todoId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('할일 삭제'),
+        content: const Text('이 할일을 삭제할까요?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('취소'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('삭제', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await TodoService().deleteTodo(todoId);
+  }
+
+  Future<void> _onLogout() async {
     await AuthService().logout();
-    if (!context.mounted) return;
+    if (!mounted) return;
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(builder: (_) => const LoginScreen()),
@@ -51,48 +174,17 @@ class _HomeScreenState extends State<HomeScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: 40),
-              // 상단 헤더
-              Row(
-                children: [
-                  Image.asset(
-                    'assets/images/character.png',
-                    width: 48,
-                    height: 48,
-                    errorBuilder: (_, __, ___) =>
-                        const Icon(Icons.smart_toy, size: 48, color: Color(0xFF4A90D9)),
-                  ),
-                  const SizedBox(width: 12),
-                  const Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '일정 관리',
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF4A90D9),
-                        ),
-                      ),
-                      Text(
-                        '오늘의 할일을 정리하고 하루를 시작하세요.',
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
-                      ),
-                    ],
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    onPressed: () => _onLogout(context),
-                    icon: const Icon(Icons.logout, color: Colors.grey),
-                  ),
-                ],
+              _buildHeader(),
+              const SizedBox(height: 15),
+              Text(
+                _formatTodayHeader(),
+                style: const TextStyle(fontSize: 13, color: Colors.grey),
               ),
               const SizedBox(height: 20),
-
-              // 할일 추가 버튼
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
-                  onPressed: () {},
+                  onPressed: () => setState(() => _showForm = !_showForm),
                   icon: const Icon(Icons.add, color: Colors.white),
                   label: const Text(
                     '할일 추가하기',
@@ -105,80 +197,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
               ),
+              if (_showForm) ...[
+                const SizedBox(height: 12),
+                _buildForm(),
+              ],
               const SizedBox(height: 20),
-
-              // 오늘 할일 섹션
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFFD1D1D1), width: 1),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          '오늘 할일',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFEEF4FF),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: const Text('전체 4', style: TextStyle(fontSize: 12, color: Color(0xFF4A90D9))),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    // 할일 목록 (하드코딩 - 나중에 실제 데이터로 교체)
-                    _buildTodoItem(done: true, title: '수학 3주차 과제', tag: '과제'),
-                    _buildTodoItem(done: true, title: '영어 단어 50개', tag: '공부'),
-                    _buildTodoItem(done: false, title: '알고리즘 복습', time: '22:00'),
-                    _buildTodoItem(done: false, title: '프로젝트 회의 준비', tag: '업무'),
-                  ],
-                ),
-              ),
+              _buildTodoList(),
               const SizedBox(height: 16),
-
-              // 오늘의 집중 현황
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFFD1D1D1), width: 1),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      '오늘의 집중 현황',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF8E8E8E)),
-                    ),
-                    const SizedBox(height: 12),
-                    GridView.count(
-                      crossAxisCount: 2,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 12,
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      childAspectRatio: 1.4,
-                      children: const [
-                        _StatCard(label: '집중 시간', value: '2', unit: 'h 13m', emoji: '🔥'),
-                        _StatCard(label: '집중률', value: '67', unit: '%', emoji: '👀'),
-                        _StatCard(label: '졸음 감지', value: '2', unit: '회', emoji: '😴'),
-                        _StatCard(label: '폰 사용', value: '1', unit: '회', emoji: '📱'),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
+              _buildFocusStats(),
               const SizedBox(height: 80),
             ],
           ),
@@ -187,49 +213,341 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildTodoItem({
-    required bool done,
-    required String title,
-    String? tag,
-    String? time,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: [
-          Icon(
-            done ? Icons.check_circle : Icons.radio_button_unchecked,
-            color: done ? const Color(0xFF4A90D9) : Colors.grey,
-            size: 22,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              title,
+  Widget _buildHeader() {
+    return Row(
+      children: [
+        Image.asset(
+          'assets/images/character.png',
+          width: 48,
+          height: 48,
+          errorBuilder: (_, _, _) =>
+              const Icon(Icons.smart_toy, size: 48, color: Color(0xFF4A90D9)),
+        ),
+        const SizedBox(width: 12),
+        const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '일정 관리',
               style: TextStyle(
-                fontSize: 14,
-                decoration: done ? TextDecoration.lineThrough : null,
-                color: done ? Colors.grey : Colors.black87,
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF4A90D9),
               ),
+            ),
+            Text(
+              '오늘의 할일을 정리하고 하루를 시작하세요.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        const Spacer(),
+        IconButton(
+          onPressed: _onLogout,
+          icon: const Icon(Icons.logout, color: Colors.grey),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildForm() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _contentController,
+            decoration: InputDecoration(
+              hintText: '할일을 입력하세요',
+              labelText: '할일',
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             ),
           ),
-          if (tag != null)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: const Color(0xFFEEF4FF),
-                borderRadius: BorderRadius.circular(12),
+          const SizedBox(height: 16),
+          const Text('카테고리', style: TextStyle(fontSize: 13, color: Colors.black54)),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: _categories.map((cat) {
+                final selected = _selectedCategoryId == cat.id;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: GestureDetector(
+                    onTap: () => setState(() {
+                      _selectedCategoryId = selected ? null : cat.id;
+                    }),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: selected ? const Color(0xFF4A90D9) : const Color(0xFFE8E8E8),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Text(
+                        cat.name,
+                        style: TextStyle(
+                          color: selected ? Colors.white : Colors.black54,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('마감 시간', style: TextStyle(fontSize: 14, color: Colors.black54)),
+              GestureDetector(
+                onTap: _pickTime,
+                child: Row(
+                  children: [
+                    Text(
+                      _timeStr(),
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: _selectedTime == null ? Colors.grey : Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const Icon(Icons.access_time, size: 18, color: Colors.grey),
+                  ],
+                ),
               ),
-              child: Text(tag, style: const TextStyle(fontSize: 11, color: Color(0xFF4A90D9))),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('날짜', style: TextStyle(fontSize: 14, color: Colors.black54)),
+              GestureDetector(
+                onTap: _pickDate,
+                child: Row(
+                  children: [
+                    Text(
+                      _formatDate(_selectedDate),
+                      style: const TextStyle(fontSize: 14, color: Colors.black87),
+                    ),
+                    const SizedBox(width: 6),
+                    const Icon(Icons.calendar_today, size: 18, color: Colors.grey),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('알림', style: TextStyle(fontSize: 14, color: Colors.black54)),
+              DropdownButton<String>(
+                value: _notifyOption,
+                underline: const SizedBox(),
+                style: const TextStyle(fontSize: 13, color: Colors.black87),
+                items: const [
+                  DropdownMenuItem(value: '없음', child: Text('없음')),
+                  DropdownMenuItem(value: '마감 당일 아침 9시', child: Text('마감 당일 아침 9시')),
+                  DropdownMenuItem(value: '마감 30분 전', child: Text('마감 30분 전')),
+                ],
+                onChanged: (v) {
+                  if (v != null) setState(() => _notifyOption = v);
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _closeForm,
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Colors.grey),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: const Text('취소', style: TextStyle(color: Colors.grey)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: _addTodo,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF4A90D9),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: const Text('추가하기', style: TextStyle(color: Colors.white)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTodoList() {
+    return StreamBuilder<List<TodoModel>>(
+      stream: _todosStream,
+      builder: (context, snapshot) {
+        final todos = snapshot.data ?? [];
+        return Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFD1D1D1), width: 1),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    '오늘 할일',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEEF4FF),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '전체 ${todos.length}',
+                      style: const TextStyle(fontSize: 12, color: Color(0xFF4A90D9)),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              if (todos.isEmpty)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Text('할일이 없습니다', style: TextStyle(color: Colors.grey)),
+                  ),
+                )
+              else
+                ...todos.map(_buildTodoItem),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildTodoItem(TodoModel todo) {
+    final category = _categories.where((c) => c.id == todo.categoryId).firstOrNull;
+
+    return GestureDetector(
+      onLongPress: () => _showDeleteDialog(todo.id),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            GestureDetector(
+              onTap: () => TodoService().toggleTodo(todo.id, !todo.isDone),
+              child: Icon(
+                todo.isDone ? Icons.check_circle : Icons.radio_button_unchecked,
+                color: todo.isDone ? const Color(0xFF4A90D9) : Colors.grey,
+                size: 22,
+              ),
             ),
-          if (time != null)
-            Row(
-              children: [
-                const Icon(Icons.access_time, size: 12, color: Colors.red),
-                const SizedBox(width: 2),
-                Text(time, style: const TextStyle(fontSize: 12, color: Colors.red)),
-              ],
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                todo.content,
+                style: TextStyle(
+                  fontSize: 14,
+                  decoration: todo.isDone ? TextDecoration.lineThrough : null,
+                  color: todo.isDone ? Colors.grey : Colors.black87,
+                ),
+              ),
             ),
+            if (todo.deadlineTime != null) ...[
+              const SizedBox(width: 6),
+              Row(
+                children: [
+                  const Icon(Icons.access_time, size: 12, color: Colors.red),
+                  const SizedBox(width: 2),
+                  Text(
+                    todo.deadlineTime!,
+                    style: const TextStyle(fontSize: 12, color: Colors.red),
+                  ),
+                ],
+              ),
+            ],
+            if (category != null) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEEF4FF),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  category.name,
+                  style: const TextStyle(fontSize: 11, color: Color(0xFF4A90D9)),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFocusStats() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFD1D1D1), width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '오늘의 집중 현황',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF8E8E8E)),
+          ),
+          const SizedBox(height: 12),
+          GridView.count(
+            crossAxisCount: 2,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            childAspectRatio: 1.4,
+            children: const [
+              _StatCard(label: '집중 시간', value: '2', unit: 'h 13m', emoji: '🔥'),
+              _StatCard(label: '집중률', value: '67', unit: '%', emoji: '👀'),
+              _StatCard(label: '졸음 감지', value: '2', unit: '회', emoji: '😴'),
+              _StatCard(label: '폰 사용', value: '1', unit: '회', emoji: '📱'),
+            ],
+          ),
         ],
       ),
     );
