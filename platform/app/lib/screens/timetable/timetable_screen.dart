@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:deskibot/models/todo_model.dart';
@@ -16,7 +15,6 @@ const List<String> _kPalette = [
 Color _hexColor(String hex) =>
     Color(int.parse(hex.replaceFirst('#', '0xFF')));
 
-String _randomHex() => _kPalette[math.Random().nextInt(_kPalette.length)];
 
 String _minutesToTime(int minutes) {
   final h = minutes ~/ 60;
@@ -197,27 +195,12 @@ class _TimetableScreenState extends State<TimetableScreen> {
                   : _TimeGrid(
                       layouts: _buildLayouts(),
                       onFocusTap: _showEditFocusLabelSheet,
+                      onTodoTap: _showTodoOptionsSheet,
                     ),
             ),
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _showAddTodoSheet,
-        backgroundColor: const Color(0xFF4A90D9),
-        child: const Icon(Icons.add, color: Colors.white),
-      ),
-    );
-  }
-
-  void _showAddTodoSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (_) => _AddTodoSheet(date: _dateKey, service: _service, onAdded: _loadData),
     );
   }
 
@@ -283,6 +266,49 @@ class _TimetableScreenState extends State<TimetableScreen> {
                     style:
                         TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showTodoOptionsSheet(String todoId, String title) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFDDDDDD),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+              child: Text(
+                title,
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Color(0xFFE74C3C)),
+              title: const Text('삭제', style: TextStyle(color: Color(0xFFE74C3C))),
+              onTap: () async {
+                Navigator.pop(context);
+                await _service.deleteTodo(todoId);
+                _loadData();
+              },
             ),
           ],
         ),
@@ -696,8 +722,9 @@ class _ColorPicker extends StatelessWidget {
 class _TimeGrid extends StatelessWidget {
   final List<_BlockLayout> layouts;
   final void Function(String id, String label)? onFocusTap;
+  final void Function(String id, String title)? onTodoTap;
 
-  const _TimeGrid({required this.layouts, this.onFocusTap});
+  const _TimeGrid({required this.layouts, this.onFocusTap, this.onTodoTap});
 
   static const double _hourH = 80.0;
   static const double _labelW = 52.0;
@@ -710,9 +737,6 @@ class _TimeGrid extends StatelessWidget {
       builder: (ctx, bc) {
         final totalW = bc.maxWidth;
         final gridW = totalW - _labelW;
-        final now = DateTime.now();
-        final nowTop = (now.hour * 60 + now.minute) * _hourH / 60;
-
         return SingleChildScrollView(
           padding: const EdgeInsets.only(top: 8, bottom: 96),
           child: SizedBox(
@@ -744,15 +768,6 @@ class _TimeGrid extends StatelessWidget {
                   ]);
                 }),
 
-                // 현재 시각선
-                Positioned(
-                  top: nowTop,
-                  left: _labelW,
-                  width: gridW,
-                  height: 2,
-                  child: const ColoredBox(color: Color(0xFF4A90D9)),
-                ),
-
                 // 블록들
                 ...layouts.map((l) {
                   final top = l.startMinutes * _hourH / 60;
@@ -783,7 +798,7 @@ class _TimeGrid extends StatelessWidget {
                     child: GestureDetector(
                       onTap: l.isFocus
                           ? () => onFocusTap?.call(l.id, l.title)
-                          : null,
+                          : () => onTodoTap?.call(l.id, l.title),
                       child: Container(
                         clipBehavior: Clip.hardEdge,
                         decoration: BoxDecoration(
@@ -903,137 +918,6 @@ class _BlockLayout {
     required this.isDone,
     required this.color,
   });
-}
-
-// ── 할일 추가 바텀시트 ─────────────────────────────────────────────
-
-class _AddTodoSheet extends StatefulWidget {
-  final String date;
-  final TimetableService service;
-  final VoidCallback onAdded;
-
-  const _AddTodoSheet({required this.date, required this.service, required this.onAdded});
-
-  @override
-  State<_AddTodoSheet> createState() => _AddTodoSheetState();
-}
-
-class _AddTodoSheetState extends State<_AddTodoSheet> {
-  final _ctrl = TextEditingController();
-  String? _startTime;
-  String? _deadlineTime;
-  late String _color;
-
-  @override
-  void initState() {
-    super.initState();
-    _color = _randomHex();
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  String _fmt(TimeOfDay t) =>
-      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-
-  Future<void> _pickStart() async {
-    final p = await showTimePicker(context: context, initialTime: TimeOfDay.now());
-    if (p != null) setState(() => _startTime = _fmt(p));
-  }
-
-  Future<void> _pickDeadline() async {
-    final p = await showTimePicker(context: context, initialTime: TimeOfDay.now());
-    if (p != null) setState(() => _deadlineTime = _fmt(p));
-  }
-
-  Future<void> _submit() async {
-    final content = _ctrl.text.trim();
-    if (content.isEmpty) return;
-
-    await widget.service.addTodo(TodoItem(
-      id: '',
-      content: content,
-      date: widget.date,
-      startTime: _startTime,
-      endTime: _deadlineTime,
-      notify: false,
-      color: _color,
-    ));
-
-    if (!mounted) return;
-    Navigator.pop(context);
-    widget.onAdded();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(
-        left: 20, right: 20, top: 24,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Container(
-              width: 40, height: 4,
-              margin: const EdgeInsets.only(bottom: 16),
-              decoration: BoxDecoration(
-                color: const Color(0xFFDDDDDD),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          const Text('할일 추가', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _ctrl,
-            autofocus: true,
-            keyboardType: TextInputType.text,
-            decoration: InputDecoration(
-              hintText: '할일을 입력하세요',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(child: _TimePickerButton(label: _startTime ?? '시작 시간', onTap: _pickStart)),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8),
-                child: Text('~', style: TextStyle(color: Colors.grey)),
-              ),
-              Expanded(child: _TimePickerButton(label: _deadlineTime ?? '마감 시간', onTap: _pickDeadline)),
-            ],
-          ),
-          const SizedBox(height: 14),
-          const Text('색상', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF555555))),
-          const SizedBox(height: 8),
-          _ColorPicker(selected: _color, onSelect: (h) => setState(() => _color = h)),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: _submit,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _hexColor(_color),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              child: const Text('추가', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 // ── 시간 지정 바텀시트 (미정 Todo → 타임테이블 이동) ──────────────

@@ -127,12 +127,38 @@ class _PomodoroTab extends StatelessWidget {
     final isIdle =
         p.status == TimerStatus.idle || p.status == TimerStatus.finished;
     final isRunning = p.status == TimerStatus.running;
-    final isPaused = p.status == TimerStatus.paused;
+    final isAlarming = provider.isAlarming;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
       child: Column(
         children: [
+          if (isAlarming)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.red.shade300),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.red.shade600, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    p.drowsyEvents.isNotEmpty && (p.phoneStartedAt != null || p.drowsyStartedAt != null)
+                        ? '졸음 또는 폰 사용이 감지되었습니다!'
+                        : p.drowsyStartedAt != null
+                            ? '졸음이 감지되었습니다!'
+                            : '폰 사용이 감지되었습니다!',
+                    style: TextStyle(color: Colors.red.shade700, fontWeight: FontWeight.w600, fontSize: 13),
+                  ),
+                ],
+              ),
+            ),
+
           if (isIdle) ...[
             const Text('집중 시간 선택',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
@@ -162,9 +188,7 @@ class _PomodoroTab extends StatelessWidget {
                 ? '완료!'
                 : isRunning
                     ? '집중 중'
-                    : isPaused
-                        ? '일시정지'
-                        : '시작 전',
+                    : '시작 전',
             color: Colors.blue,
           ),
 
@@ -197,17 +221,7 @@ class _PomodoroTab extends StatelessWidget {
                       .startPomodoro(selectedDuration),
                 )
               else if (isRunning)
-                _TimerBtn(
-                  icon: Icons.pause,
-                  label: '일시정지',
-                  onTap: () => context.read<TimerProvider>().pausePomodoro(),
-                )
-              else if (isPaused)
-                _TimerBtn(
-                  icon: Icons.play_arrow,
-                  label: '재시작',
-                  onTap: () => context.read<TimerProvider>().resumePomodoro(),
-                ),
+                const SizedBox.shrink(),
 
               if (!isIdle && p.status != TimerStatus.finished) ...[
                 const SizedBox(width: 24),
@@ -241,8 +255,7 @@ class _StopwatchTab extends StatelessWidget {
     final isIdle = sw.status == TimerStatus.idle;
     final isRunning = sw.status == TimerStatus.running;
     final isPaused = sw.status == TimerStatus.paused;
-    final isMyControl = provider.isStopwatchStartedByApp;
-    final isEsp32Running = isRunning && !isMyControl;
+    final isEsp32Started = !provider.isStopwatchStartedByApp && !isIdle;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
@@ -251,37 +264,25 @@ class _StopwatchTab extends StatelessWidget {
           _CircularTimer(
             displayText: provider.formatSec(sw.elapsedSec),
             progress: null,
-            sublabel: isEsp32Running
-                ? '집중 중 (로봇에서 시작됨)'
-                : isRunning
-                    ? '집중 중'
-                    : isPaused
-                        ? '일시정지'
-                        : '시작 전',
+            sublabel: isRunning ? '집중 중' : isPaused ? '일시정지' : '시작 전',
             color: Colors.green,
           ),
 
-          if (isEsp32Running) ...[
-            const SizedBox(height: 12),
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.orange.shade50,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange.shade200),
-              ),
-              child: Text(
-                '로봇에서 시작된 스톱워치입니다.\n로봇에서 종료할 수 있어요.',
-                textAlign: TextAlign.center,
-                style:
-                    TextStyle(color: Colors.orange.shade700, fontSize: 13),
-              ),
+          if (isEsp32Started) ...[
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.smart_toy, size: 14, color: Colors.grey.shade500),
+                const SizedBox(width: 4),
+                Text('로봇에서 시작됨',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+              ],
             ),
           ],
 
           if (sw.pauseEvents.isNotEmpty) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             Text(
               '일시정지 ${sw.pauseEvents.length}회 · 총 ${sw.totalPauseDuration}분',
               style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
@@ -304,20 +305,18 @@ class _StopwatchTab extends StatelessWidget {
                   },
                 ),
 
-              if (isRunning && isMyControl)
+              if (isRunning)
                 _TimerBtn(
                   icon: Icons.pause,
                   label: '일시정지',
-                  onTap: () =>
-                      context.read<TimerProvider>().pauseStopwatch(),
+                  onTap: () => context.read<TimerProvider>().pauseStopwatch(),
                 ),
 
-              if (isPaused && isMyControl) ...[
+              if (isPaused) ...[
                 _TimerBtn(
                   icon: Icons.play_arrow,
                   label: '재시작',
-                  onTap: () =>
-                      context.read<TimerProvider>().resumeStopwatch(),
+                  onTap: () => context.read<TimerProvider>().resumeStopwatch(),
                 ),
                 const SizedBox(width: 16),
                 _TimerBtn(
@@ -331,8 +330,7 @@ class _StopwatchTab extends StatelessWidget {
                   icon: Icons.refresh,
                   label: '초기화',
                   color: Colors.grey,
-                  onTap: () =>
-                      context.read<TimerProvider>().resetStopwatch(),
+                  onTap: () => context.read<TimerProvider>().resetStopwatch(),
                 ),
               ],
             ],
