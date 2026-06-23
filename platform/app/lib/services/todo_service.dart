@@ -32,6 +32,17 @@ class TodoService {
     await _db.collection('users').doc(uid).collection('todos').add(todo.toMap());
   }
 
+  Future<void> updateTodo(String todoId, TodoModel todo) async {
+    final uid = await AuthService().getCurrentUid();
+    if (uid == null) return;
+    await _db
+        .collection('users')
+        .doc(uid)
+        .collection('todos')
+        .doc(todoId)
+        .update(todo.toMap());
+  }
+
   Future<void> deleteTodo(String todoId) async {
     final uid = await AuthService().getCurrentUid();
     if (uid == null) return;

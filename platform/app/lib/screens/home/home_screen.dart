@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:deskibot/models/focus_session_model.dart';
 import 'package:deskibot/models/todo_model.dart';
 import 'package:deskibot/models/user_model.dart';
 import 'package:deskibot/services/auth_service.dart';
+import 'package:deskibot/services/focus_session_service.dart';
 import 'package:deskibot/services/todo_service.dart';
 import 'package:deskibot/services/user_service.dart';
 import 'package:deskibot/screens/auth/login_screen.dart';
@@ -16,18 +18,24 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   List<Category> _categories = [];
   late final Stream<List<TodoModel>> _todosStream;
+  late final Stream<List<FocusSessionModel>> _focusSessionsStream;
 
   bool _showForm = false;
+  String? _editingTodoId;
   final _contentController = TextEditingController();
   String? _selectedCategoryId;
   DateTime _selectedDate = DateTime.now();
-  TimeOfDay? _selectedTime;
+  bool _noTimeSet = false;
+  TimeOfDay? _selectedStartTime;
+  TimeOfDay? _selectedEndTime;
+  TimeOfDay? _selectedDeadlineTime;
   String _notifyOption = '없음';
 
   @override
   void initState() {
     super.initState();
     _todosStream = TodoService().getTodayTodos();
+    _focusSessionsStream = FocusSessionService().getTodaySessions();
     _loadData();
   }
 
@@ -57,17 +65,39 @@ class _HomeScreenState extends State<HomeScreen> {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   }
 
-  String _timeStr() {
-    if (_selectedTime == null) return '--:--';
-    return '${_selectedTime!.hour.toString().padLeft(2, '0')}:${_selectedTime!.minute.toString().padLeft(2, '0')}';
+  String _timeStr(TimeOfDay? time) {
+    if (time == null) return '--:--';
+    return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
   }
 
-  Future<void> _pickTime() async {
+  TimeOfDay? _parseTime(String? hhmm) {
+    if (hhmm == null) return null;
+    final parts = hhmm.split(':');
+    return TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+  }
+
+  Future<void> _pickStartTime() async {
     final picked = await showTimePicker(
       context: context,
-      initialTime: _selectedTime ?? TimeOfDay.now(),
+      initialTime: _selectedStartTime ?? TimeOfDay.now(),
     );
-    if (picked != null) setState(() => _selectedTime = picked);
+    if (picked != null) setState(() => _selectedStartTime = picked);
+  }
+
+  Future<void> _pickEndTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _selectedEndTime ?? _selectedStartTime ?? TimeOfDay.now(),
+    );
+    if (picked != null) setState(() => _selectedEndTime = picked);
+  }
+
+  Future<void> _pickDeadlineTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _selectedDeadlineTime ?? TimeOfDay.now(),
+    );
+    if (picked != null) setState(() => _selectedDeadlineTime = picked);
   }
 
   Future<void> _pickDate() async {
@@ -84,11 +114,64 @@ class _HomeScreenState extends State<HomeScreen> {
     _contentController.clear();
     setState(() {
       _showForm = false;
+      _editingTodoId = null;
       _selectedCategoryId = null;
       _selectedDate = DateTime.now();
-      _selectedTime = null;
+      _noTimeSet = false;
+      _selectedStartTime = null;
+      _selectedEndTime = null;
+      _selectedDeadlineTime = null;
       _notifyOption = '없음';
     });
+  }
+
+  void _startEdit(TodoModel todo) {
+    _contentController.text = todo.content;
+    final dateParts = todo.date.split('-');
+    setState(() {
+      _showForm = true;
+      _editingTodoId = todo.id;
+      _selectedCategoryId = todo.categoryId;
+      _selectedDate = DateTime(
+        int.parse(dateParts[0]),
+        int.parse(dateParts[1]),
+        int.parse(dateParts[2]),
+      );
+      _noTimeSet = todo.startTime == null;
+      _selectedStartTime = _parseTime(todo.startTime);
+      _selectedEndTime = _parseTime(todo.endTime);
+      _selectedDeadlineTime = _noTimeSet ? _parseTime(todo.deadlineTime) : null;
+      if (!todo.notify) {
+        _notifyOption = '없음';
+      } else if (todo.notifyBefore == 30) {
+        _notifyOption = '마감 30분 전';
+      } else {
+        _notifyOption = '마감 당일 아침 9시';
+      }
+    });
+  }
+
+  Future<void> _showTodoActions(TodoModel todo) async {
+    final action = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 'edit'),
+            child: const Text('수정'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 'delete'),
+            child: const Text('삭제', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (action == 'edit') {
+      _startEdit(todo);
+    } else if (action == 'delete') {
+      await _showDeleteDialog(todo.id);
+    }
   }
 
   Future<void> _addTodo() async {
@@ -100,18 +183,40 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    final timeStr = _selectedTime == null ? null : _timeStr();
+    if (_selectedCategoryId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('카테고리를 선택해주세요')),
+      );
+      return;
+    }
+
+    if (!_noTimeSet && (_selectedStartTime == null || _selectedEndTime == null)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('시간을 선택해주세요')),
+      );
+      return;
+    }
+
+    final startTimeStr = _noTimeSet ? null : _timeStr(_selectedStartTime);
+    final endTimeStr = _noTimeSet ? null : _timeStr(_selectedEndTime);
+    final deadlineBase = _noTimeSet ? _selectedDeadlineTime : _selectedEndTime;
+
+    if (_notifyOption != '없음' && deadlineBase == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('마감 시간을 선택해주세요')),
+      );
+      return;
+    }
+
+    final deadlineTime = deadlineBase == null ? null : _timeStr(deadlineBase);
     bool notify = false;
-    String? deadlineTime;
     int? notifyBefore;
 
     if (_notifyOption == '마감 당일 아침 9시') {
       notify = true;
-      deadlineTime = '09:00';
     } else if (_notifyOption == '마감 30분 전') {
       notify = true;
       notifyBefore = 30;
-      deadlineTime = timeStr;
     }
 
     final todo = TodoModel(
@@ -119,15 +224,19 @@ class _HomeScreenState extends State<HomeScreen> {
       content: content,
       categoryId: _selectedCategoryId,
       date: _dateToStr(_selectedDate),
-      time: timeStr,
-      hasTime: _selectedTime != null,
+      startTime: startTimeStr,
+      endTime: endTimeStr,
       notify: notify,
       deadlineTime: deadlineTime,
       notifyBefore: notifyBefore,
       isDone: false,
     );
 
-    await TodoService().addTodo(todo);
+    if (_editingTodoId == null) {
+      await TodoService().addTodo(todo);
+    } else {
+      await TodoService().updateTodo(_editingTodoId!, todo);
+    }
     if (!mounted) return;
     _closeForm();
   }
@@ -184,7 +293,7 @@ class _HomeScreenState extends State<HomeScreen> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
-                  onPressed: () => setState(() => _showForm = !_showForm),
+                  onPressed: () => _showForm ? _closeForm() : setState(() => _showForm = true),
                   icon: const Icon(Icons.add, color: Colors.white),
                   label: const Text(
                     '할일 추가하기',
@@ -311,27 +420,102 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 16),
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('마감 시간', style: TextStyle(fontSize: 14, color: Colors.black54)),
-              GestureDetector(
-                onTap: _pickTime,
-                child: Row(
-                  children: [
-                    Text(
-                      _timeStr(),
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: _selectedTime == null ? Colors.grey : Colors.black87,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    const Icon(Icons.access_time, size: 18, color: Colors.grey),
-                  ],
-                ),
+              Checkbox(
+                value: _noTimeSet,
+                onChanged: (v) => setState(() {
+                  _noTimeSet = v ?? false;
+                  if (_noTimeSet) {
+                    _selectedStartTime = null;
+                    _selectedEndTime = null;
+                  } else {
+                    _selectedDeadlineTime = null;
+                  }
+                }),
               ),
+              const Text('시간 설정하지 않기', style: TextStyle(fontSize: 14, color: Colors.black54)),
             ],
           ),
+          Opacity(
+            opacity: _noTimeSet ? 0.4 : 1,
+            child: IgnorePointer(
+              ignoring: _noTimeSet,
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('시작 시간', style: TextStyle(fontSize: 14, color: Colors.black54)),
+                      GestureDetector(
+                        onTap: _pickStartTime,
+                        child: Row(
+                          children: [
+                            Text(
+                              _timeStr(_selectedStartTime),
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: _selectedStartTime == null ? Colors.grey : Colors.black87,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            const Icon(Icons.access_time, size: 18, color: Colors.grey),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('종료 시간', style: TextStyle(fontSize: 14, color: Colors.black54)),
+                      GestureDetector(
+                        onTap: _pickEndTime,
+                        child: Row(
+                          children: [
+                            Text(
+                              _timeStr(_selectedEndTime),
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: _selectedEndTime == null ? Colors.grey : Colors.black87,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            const Icon(Icons.access_time, size: 18, color: Colors.grey),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_noTimeSet) ...[
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('마감 시간', style: TextStyle(fontSize: 14, color: Colors.black54)),
+                GestureDetector(
+                  onTap: _pickDeadlineTime,
+                  child: Row(
+                    children: [
+                      Text(
+                        _timeStr(_selectedDeadlineTime),
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: _selectedDeadlineTime == null ? Colors.grey : Colors.black87,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      const Icon(Icons.access_time, size: 18, color: Colors.grey),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 12),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -395,7 +579,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   ),
-                  child: const Text('추가하기', style: TextStyle(color: Colors.white)),
+                  child: Text(_editingTodoId == null ? '추가하기' : '수정하기', style: const TextStyle(color: Colors.white)),
                 ),
               ),
             ],
@@ -461,7 +645,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final category = _categories.where((c) => c.id == todo.categoryId).firstOrNull;
 
     return GestureDetector(
-      onLongPress: () => _showDeleteDialog(todo.id),
+      onLongPress: () => _showTodoActions(todo),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Row(
@@ -518,38 +702,73 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  (String, String) _formatFocusDuration(int totalMinutes) {
+    if (totalMinutes <= 0) return ('0', 'm');
+    final hours = totalMinutes ~/ 60;
+    final minutes = totalMinutes % 60;
+    if (hours <= 0) return (minutes.toString(), 'm');
+    return (hours.toString(), 'h ${minutes}m');
+  }
+
   Widget _buildFocusStats() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFD1D1D1), width: 1),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '오늘의 집중 현황',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF8E8E8E)),
+    return StreamBuilder<List<FocusSessionModel>>(
+      stream: _focusSessionsStream,
+      builder: (context, snapshot) {
+        final sessions = snapshot.data ?? [];
+        final totalDuration = sessions.fold<int>(0, (sum, s) => sum + s.actualDuration);
+        final drowsyCount = sessions.fold<int>(0, (sum, s) => sum + s.drowsyEventCount);
+        final drowsyDuration = sessions.fold<int>(0, (sum, s) => sum + s.drowsyDuration);
+        final phoneCount = sessions.fold<int>(0, (sum, s) => sum + s.phoneEventCount);
+        final phoneDuration = sessions.fold<int>(0, (sum, s) => sum + s.phoneDuration);
+        final (focusValue, focusUnit) = _formatFocusDuration(totalDuration);
+        final focusRate = totalDuration <= 0
+            ? '-'
+            : (((totalDuration - drowsyDuration - phoneDuration) / totalDuration) * 100)
+                .clamp(0, 100)
+                .round()
+                .toString();
+
+        return Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFD1D1D1), width: 1),
           ),
-          const SizedBox(height: 12),
-          GridView.count(
-            crossAxisCount: 2,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            childAspectRatio: 1.4,
-            children: const [
-              _StatCard(label: '집중 시간', value: '2', unit: 'h 13m', emoji: '🔥'),
-              _StatCard(label: '집중률', value: '67', unit: '%', emoji: '👀'),
-              _StatCard(label: '졸음 감지', value: '2', unit: '회', emoji: '😴'),
-              _StatCard(label: '폰 사용', value: '1', unit: '회', emoji: '📱'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '오늘의 집중 현황',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF8E8E8E)),
+              ),
+              const SizedBox(height: 12),
+              if (sessions.isEmpty)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Text('아직 오늘의 세션이 없어요', style: TextStyle(color: Colors.grey)),
+                  ),
+                )
+              else
+                GridView.count(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  childAspectRatio: 1.4,
+                  children: [
+                    _StatCard(label: '집중 시간', value: focusValue, unit: focusUnit, emoji: '🔥'),
+                    _StatCard(label: '집중률', value: focusRate, unit: focusRate == '-' ? '' : '%', emoji: '👀'),
+                    _StatCard(label: '졸음 감지', value: drowsyCount.toString(), unit: '회', emoji: '😴'),
+                    _StatCard(label: '폰 사용', value: phoneCount.toString(), unit: '회', emoji: '📱'),
+                  ],
+                ),
             ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
