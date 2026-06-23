@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:deskibot/services/auth_service.dart';
+import 'package:deskibot/services/timetable_service.dart';
 import 'package:deskibot/screens/auth/login_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -10,18 +11,69 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  final _service = TimetableService();
+
   String? _name;
+  int _focusMin = 0;
+  int _focusRate = 0;
+  int _drowsyCount = 0;
+  int _phoneCount = 0;
+  bool _statsLoaded = false;
+  bool _wasVisible = false;
 
   @override
   void initState() {
     super.initState();
     _loadName();
+    _loadStats();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final isVisible = TickerMode.valuesOf(context).enabled;
+    if (isVisible && !_wasVisible) _loadStats();
+    _wasVisible = isVisible;
+  }
+
+  String get _dateKey {
+    final d = DateTime.now();
+    return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
   }
 
   Future<void> _loadName() async {
     final name = await AuthService().getCurrentName();
     if (!mounted) return;
     setState(() => _name = name);
+  }
+
+  Future<void> _loadStats() async {
+    final stats = await _service.getDailyStats(_dateKey);
+    if (!mounted) return;
+
+    final pomodoro = stats['pomodoro_duration'] ?? 0;
+    final stopwatch = stats['stopwatch_duration'] ?? 0;
+    final totalFocus = pomodoro + stopwatch;
+    final drowsyDur = stats['drowsy_duration'] ?? 0;
+    final phoneDur = stats['phone_duration'] ?? 0;
+    final totalTime = totalFocus + drowsyDur + phoneDur;
+    final rate = totalTime > 0 ? (totalFocus * 100 ~/ totalTime) : 0;
+
+    setState(() {
+      _focusMin = totalFocus;
+      _focusRate = rate;
+      _drowsyCount = stats['drowsy_count'] ?? 0;
+      _phoneCount = stats['phone_count'] ?? 0;
+      _statsLoaded = true;
+    });
+  }
+
+  String _formatMinutes(int min) {
+    if (min <= 0) return '0m';
+    if (min < 60) return '${min}m';
+    final h = min ~/ 60;
+    final m = min % 60;
+    return m > 0 ? '${h}h ${m}m' : '${h}h';
   }
 
   String get _displayName {
@@ -162,20 +214,47 @@ class _HomeScreenState extends State<HomeScreen> {
                       style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF8E8E8E)),
                     ),
                     const SizedBox(height: 12),
-                    GridView.count(
-                      crossAxisCount: 2,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 12,
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      childAspectRatio: 1.4,
-                      children: const [
-                        _StatCard(label: '집중 시간', value: '2', unit: 'h 13m', emoji: '🔥'),
-                        _StatCard(label: '집중률', value: '67', unit: '%', emoji: '👀'),
-                        _StatCard(label: '졸음 감지', value: '2', unit: '회', emoji: '😴'),
-                        _StatCard(label: '폰 사용', value: '1', unit: '회', emoji: '📱'),
-                      ],
-                    ),
+                    if (!_statsLoaded)
+                      const Center(
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(vertical: 20),
+                          child: CircularProgressIndicator(
+                            color: Color(0xFF4A90D9),
+                            strokeWidth: 2,
+                          ),
+                        ),
+                      )
+                    else
+                      GridView.count(
+                        crossAxisCount: 2,
+                        crossAxisSpacing: 12,
+                        mainAxisSpacing: 12,
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        childAspectRatio: 1.4,
+                        children: [
+                          _StatCard(
+                            label: '집중 시간',
+                            value: _formatMinutes(_focusMin),
+                            emoji: '🔥',
+                          ),
+                          _StatCard(
+                            label: '집중률',
+                            value: '$_focusRate%',
+                            emoji: '👀',
+                          ),
+                          _StatCard(
+                            label: '졸음 감지',
+                            value: '$_drowsyCount회',
+                            emoji: '😴',
+                          ),
+                          _StatCard(
+                            label: '폰 사용',
+                            value: '$_phoneCount회',
+                            emoji: '📱',
+                          ),
+                        ],
+                      ),
                   ],
                 ),
               ),
@@ -239,13 +318,11 @@ class _HomeScreenState extends State<HomeScreen> {
 class _StatCard extends StatelessWidget {
   final String label;
   final String value;
-  final String unit;
   final String emoji;
 
   const _StatCard({
     required this.label,
     required this.value,
-    required this.unit,
     required this.emoji,
   });
 
@@ -280,25 +357,15 @@ class _StatCard extends StatelessWidget {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  RichText(
-                    text: TextSpan(
-                      children: [
-                        TextSpan(
-                          text: value,
-                          style: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF4A90D9),
-                          ),
-                        ),
-                        TextSpan(
-                          text: unit,
-                          style: const TextStyle(fontSize: 14, color: Colors.grey),
-                        ),
-                      ],
+                  Text(
+                    value,
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF4A90D9),
                     ),
                   ),
-                  Text(emoji, style: const TextStyle(fontSize: 40)),
+                  Text(emoji, style: const TextStyle(fontSize: 36)),
                 ],
               ),
             ),

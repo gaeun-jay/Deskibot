@@ -30,7 +30,10 @@ class _BottomBarScreenState extends State<BottomBarScreen> {
     return Scaffold(
       body: IndexedStack(
         index: _currentIndex,
-        children: _screens,
+        children: List.generate(
+          _screens.length,
+          (i) => TickerMode(enabled: i == _currentIndex, child: _screens[i]),
+        ),
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
