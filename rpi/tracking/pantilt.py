@@ -1,36 +1,74 @@
+"""
+pantilt.py
+----------
+Pan-tilt servo controller for face/pose tracking.
+ 
+Tracking behaviour (priority order):
+  1. Full face in frame   — stop motors (no correction needed)
+  2. Partial face         — center face using PID-style proportional control
+  3. Pose only (shoulders)— pan toward shoulder midpoint, tilt upward to find face
+  4. No detection         — return to center position gradually
+ 
+Full-face is defined as all 5 key landmarks (eyes, nose tip, mouth corners)
+lying within the inner 90% of the frame on both axes.
+"""
+
 import RPi.GPIO as GPIO
 import mediapipe as mp
 
-# =====================================================================
-# 서보 설정
-# =====================================================================
+# ---------------------------------------------------------------------------
+# GPIO pin assignment
+# ---------------------------------------------------------------------------
 PAN_GPIO  = 12
 TILT_GPIO = 13
-PWM_FREQ  = 50
+PWM_FREQ  = 50  # Hz (standard for hobby servos)
 
+# ---------------------------------------------------------------------------
+# Angle limits and defaults
+# ---------------------------------------------------------------------------
 PAN_MIN,  PAN_MAX  = 30, 150
 TILT_MIN, TILT_MAX = 50, 120
 PAN_CENTER  = 90
 TILT_CENTER = 80
 
-KP_PAN  = 0.008
-KP_TILT = 0.008
-DEADZONE_PX = 30
+# ---------------------------------------------------------------------------
+# Controller gains and deadzone
+# ---------------------------------------------------------------------------
+KP_PAN      = 0.008    # Proportional gain for pan axis
+KP_TILT     = 0.008    # Proportional gain for tilt axis
+DEADZONE_PX = 30       # Pixel error below which no correction is applied
 
-# 눈코입 랜드마크 인덱스 (FaceMesh)
-# 좌안 중심: 33, 우안 중심: 263, 코끝: 1, 입 좌: 61, 입 우: 291
+# ---------------------------------------------------------------------------
+# Landmark indices used for full-face detection (FaceMesh)
+# left eye: 33, right eye: 263, nose tip: 1, mouth left: 61, mouth right: 291
+# ---------------------------------------------------------------------------
 FACE_FULL_LANDMARKS = [33, 263, 1, 61, 291]
 
 
 def _angle_to_duty(angle: float) -> float:
+    """Convert servo angle (0–180°) to PWM duty cycle (2.5–12.5%)."""
     return 2.5 + (angle / 180.0) * 10.0
 
 
 def _is_full_face(face_res, frame_w, frame_h) -> tuple:
+   
     """
-    눈코입 5개 랜드마크가 전부 프레임 안(5~95%)에 있으면 True
-    하나라도 프레임 밖이면 False
+    Check whether all key facial landmarks are fully within the frame.
+ 
+    A face is considered 'full' when all 5 landmarks lie within
+    the inner 90% of the frame (5%–95% on both axes).
+ 
+    Args:
+        face_res: MediaPipe FaceMesh result
+        frame_w:  Frame width in pixels
+        frame_h:  Frame height in pixels
+ 
+    Returns:
+        (is_full, face_cx, face_cy)
+        face_cx / face_cy are pixel coordinates of the face centroid,
+        or None if the face is not full.
     """
+    
     if not face_res or not face_res.multi_face_landmarks:
         return False, None, None
 
@@ -49,6 +87,14 @@ def _is_full_face(face_res, frame_w, frame_h) -> tuple:
 
 
 class PanTilt:
+    
+    """
+    Two-axis pan-tilt servo controller.
+ 
+    Angles are maintained as floats internally and clamped to hardware limits
+    before each PWM write.
+    """
+    
     def __init__(self):
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
@@ -64,25 +110,42 @@ class PanTilt:
         self.pan.start(_angle_to_duty(self.pan_angle))
         self.tilt.start(_angle_to_duty(self.tilt_angle))
 
-        print(f"✅ 서보모터 초기화 완료 (Pan={PAN_GPIO}, Tilt={TILT_GPIO})")
+        print(f"[PanTilt] Initialized (Pan=GPIO{PAN_GPIO}, Tilt=GPIO{TILT_GPIO})")
 
-    def _set_pan(self, angle: float):
+    # ------------------------------------------------------------------
+    # Internal servo writers
+    # ------------------------------------------------------------------
+    def _set_pan(self, angle: float) -> None:
         self.pan.ChangeDutyCycle(_angle_to_duty(angle))
 
-    def _set_tilt(self, angle: float):
+    def _set_tilt(self, angle: float) -> None: 
         self.tilt.ChangeDutyCycle(_angle_to_duty(angle))
 
+    # ------------------------------------------------------------------
+    # Main update — called once per frame
+    # ------------------------------------------------------------------
     def update(self, face_cx, face_cy, frame_w, frame_h,
-           has_face, has_pose, pose_res=None, face_res=None):
+           has_face, has_pose, pose_res=None, face_res=None) -> None:
 
+        """
+        Update servo positions based on the current detection state.
+ 
+        Priority:
+          1. Full face visible  → stop motors
+          2. Partial face       → proportional correction toward center
+          3. Pose only          → pan to shoulder midpoint, tilt up
+          4. No detection       → slowly return to center
+        """
+        
         full_face, _, _ = _is_full_face(face_res, frame_w, frame_h)
+        
+        # 1. Full face in frame — cut PWM signal to reduce jitter
         if full_face:
-            # 신호 완전히 끊기
             self.pan.ChangeDutyCycle(0)
             self.tilt.ChangeDutyCycle(0)
             return
 
-        # ── 얼굴은 감지됐지만 일부만 보임 (반쪽) ───────────────────
+        # 2. Partial face — proportional pan/tilt correction
         elif has_face and face_cx is not None:
             err_x = face_cx - frame_w / 2
             err_y = face_cy - frame_h / 2
@@ -97,7 +160,7 @@ class PanTilt:
                 self.tilt_angle  = max(TILT_MIN, min(TILT_MAX, self.tilt_angle))
                 self._set_tilt(self.tilt_angle)
 
-        # ── 어깨만 감지 → 위로 올리기 ──────────────────────────────
+        #3. Pose only — pan toward shoulders, tilt upward to locate face
         elif has_pose and pose_res is not None:
             mp_pose = mp.solutions.pose
             lms = pose_res.pose_landmarks.landmark
@@ -116,7 +179,7 @@ class PanTilt:
                 self.tilt_angle -= 0.5
                 self._set_tilt(self.tilt_angle)
 
-        # ── 아무것도 없음 → 센터 복귀 ──────────────────────────────
+        # 4. No detection — gradually return to center
         else:
             if abs(self.pan_angle - PAN_CENTER) > 1:
                 self.pan_angle += (PAN_CENTER - self.pan_angle) * 0.05
@@ -126,8 +189,12 @@ class PanTilt:
                 self.tilt_angle += (TILT_CENTER - self.tilt_angle) * 0.05
                 self._set_tilt(self.tilt_angle)
 
-    def close(self):
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
+    def close(self) -> None:
+        """Stop PWM signals and release GPIO resources."""
         self.pan.stop()
         self.tilt.stop()
         GPIO.cleanup()
-        print("✅ 서보모터 종료 완료")
+        print("[PanTilt] Shutdown complete")

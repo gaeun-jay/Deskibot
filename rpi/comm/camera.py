@@ -1,3 +1,14 @@
+"""
+camera.py
+---------
+Flask-based MJPEG streaming server for real-time monitoring.
+ 
+Exposes:
+  GET /            — Browser dashboard (HTML)
+  GET /video_feed  — MJPEG stream
+  GET /status      — JSON snapshot of the current detection state
+"""
+
 import threading
 import time
 import cv2
@@ -9,7 +20,7 @@ _frame_lock  = threading.Lock()
 _status_lock = threading.Lock()
 _current_frame  = None
 _current_status = {
-    "state":    "시작 중...",
+    "state":    "initializing",
     "ear":      "N/A",
     "has_face": False,
     "has_pose": False,
@@ -22,7 +33,7 @@ HTML = """
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Deskibot 모니터</title>
+    <title>Deskibot Monitor</title>
     <style>
         body { background: #1a1a1a; color: #fff; font-family: monospace; padding: 20px; margin: 0; }
         h1   { color: #00ffcc; margin-bottom: 10px; }
@@ -36,7 +47,7 @@ HTML = """
     </style>
 </head>
 <body>
-    <h1>🤖 Deskibot 실시간 모니터</h1>
+    <h1>Deskibot 실시간 모니터</h1>
     <div class="container">
         <img src="/video_feed">
         <div class="status" id="status">
@@ -55,8 +66,8 @@ HTML = """
                         <p>EAR: <span class="${data.drowsy ? 'warn' : 'ok'}">${data.ear}</span></p>
                         <p>얼굴: <span class="${data.has_face ? 'ok' : 'gray'}">${data.has_face ? '감지됨' : '미감지'}</span></p>
                         <p>자세: <span class="${data.has_pose ? 'ok' : 'gray'}">${data.has_pose ? '감지됨' : '미감지'}</span></p>
-                        <p>핸드폰: <span class="${data.phone ? 'warn' : 'gray'}">${data.phone ? '감지됨 📱' : '없음'}</span></p>
-                        <p>졸음: <span class="${data.drowsy ? 'warn' : 'ok'}">${data.drowsy ? '감지됨 😴' : '정상'}</span></p>
+                        <p>핸드폰: <span class="${data.phone ? 'warn' : 'gray'}">${data.phone ? '핸드폰 감지됨' : '없음'}</span></p>
+                        <p>졸음: <span class="${data.drowsy ? 'warn' : 'ok'}">${data.drowsy ? '졸음 감지됨' : '정상'}</span></p>
                     `;
                 });
         }
@@ -67,12 +78,14 @@ HTML = """
 </html>
 """
 
-def update_frame(frame):
+def update_frame(frame) -> None:
+    """Thread-safe update of the latest camera frame for MJPEG streaming."""
     global _current_frame
     with _frame_lock:
         _current_frame = frame.copy()
 
-def update_status(state, ear, has_face, has_pose, phone, drowsy):
+def update_status(state, ear, has_face, has_pose, phone, drowsy) -> None:
+    """Thread-safe update of the detection status snapshot served at /status."""
     global _current_status
     with _status_lock:
         _current_status = {
@@ -85,6 +98,7 @@ def update_status(state, ear, has_face, has_pose, phone, drowsy):
         }
 
 def _generate():
+    """Generator that yields JPEG frames as a multipart MJPEG stream."""
     while True:
         with _frame_lock:
             if _current_frame is None:
@@ -114,4 +128,4 @@ def start_server(host='0.0.0.0', port=5000):
         daemon=True
     )
     t.start()
-    print(f"✅ 웹 서버 시작! http://<RPi5_IP>:5000")
+    print(f"[Camera] Web server started — http://<RPi_IP>:{port}")

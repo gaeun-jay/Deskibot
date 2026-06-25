@@ -1,3 +1,12 @@
+"""
+phone_detect.py
+---------------
+Phone detection module using MediaPipe ObjectDetector with EfficientDet-Lite0.
+ 
+Detects 'cell phone' objects in RGB frames and draws bounding boxes.
+Other detected objects are rendered with low-opacity outlines for debug visibility.
+"""
+
 import mediapipe as mp
 import cv2
 
@@ -10,6 +19,7 @@ PHONE_LABEL      = "cell phone"
 
 
 class PhoneDetector:
+    """Wraps the MediaPipe ObjectDetector for phone-specific detection."""
     def __init__(self):
         self.detector = None
         try:
@@ -20,19 +30,45 @@ class PhoneDetector:
                 max_results=5
             )
             self.detector = mp_vision.ObjectDetector.create_from_options(det_options)
-            print("✅ Object Detector 초기화 완료 (핸드폰 감지 활성화)")
+            print("[PhoneDetector] Initialized")
         except Exception as e:
-            print(f"⚠️  Object Detector 비활성화: {e}")
+            print(f"[PhoneDetector] Disabled — {e}")
 
-    def detect(self, frame_rgb):
-        """핸드폰 감지 실행, 결과 detections 반환"""
+    def detect(self, frame_rgb) -> list:
+       
+        """
+        Run object detection on an RGB frame.
+ 
+        Args:
+            frame_rgb: numpy array in RGB format (H, W, 3)
+ 
+        Returns:
+            List of Detection objects; empty list if detector is unavailable.
+        """
+        
         if self.detector is None:
             return []
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
         return self.detector.detect(mp_image).detections
 
-    def draw(self, frame, detections, h, w):
-        """감지 결과 프레임에 시각화, phone_detected bool 반환"""
+    def draw(self, frame, detections, h, w) -> bool:
+        
+        """
+        Overlay bounding boxes on the BGR frame and return phone detection flag.
+
+        Phone detections are highlighted in orange; other objects in gray.
+
+        Args:
+            frame:      BGR frame to draw on (modified in-place)
+            detections: Detection list from detect()
+            h, w:       Frame height and width
+
+        Returns:
+            True if at least one 'cell phone' was detected, False otherwise.
+        """
+        
+        phone_detected = False
+       
         phone_detected = False
         for det in detections:
             if not det.categories:
@@ -60,5 +96,6 @@ class PhoneDetector:
         return phone_detected
 
     def close(self):
+        """Release the underlying MediaPipe detector."""
         if self.detector:
             self.detector.close()
