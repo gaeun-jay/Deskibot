@@ -83,21 +83,7 @@ class _SignupScreenState extends State<SignupScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      body: Stack(
-        children: [
-          // 하단 물결 이미지
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: Image.asset(
-              'assets/images/Bottom_background.png',
-              width: double.infinity,
-              fit: BoxFit.fitWidth,
-            ),
-          ),
-
-          SafeArea(
+      body: SafeArea(
             child: Column(
               children: [
                 // 상단 앱바
@@ -222,7 +208,7 @@ class _SignupScreenState extends State<SignupScreen> {
                               backgroundColor: const Color(0xFF4A90D9),
                               padding: const EdgeInsets.symmetric(vertical: 16),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
+                                borderRadius: BorderRadius.circular(30),
                               ),
                             ),
                             child: _isLoading
@@ -244,7 +230,7 @@ class _SignupScreenState extends State<SignupScreen> {
                                   ),
                           ),
                         ),
-                        const SizedBox(height: 120), // 하단 물결 이미지 공간
+                        const SizedBox(height: 40),
                       ],
                     ),
                   ),
@@ -252,9 +238,7 @@ class _SignupScreenState extends State<SignupScreen> {
               ],
             ),
           ),
-        ],
-      ),
-    );
+      );
   }
 
   // 라벨
@@ -282,15 +266,15 @@ class _SignupScreenState extends State<SignupScreen> {
         hintText: hint,
         hintStyle: const TextStyle(color: Colors.grey),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(30),
           borderSide: const BorderSide(color: Color(0xFFDDDDDD)),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(30),
           borderSide: const BorderSide(color: Color(0xFFDDDDDD)),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(30),
           borderSide: const BorderSide(color: Color(0xFF4A90D9)),
         ),
         contentPadding: const EdgeInsets.symmetric(
@@ -313,7 +297,7 @@ class _SignupScreenState extends State<SignupScreen> {
         padding: const EdgeInsets.symmetric(vertical: 14),
         decoration: BoxDecoration(
           color: isSelected ? const Color(0xFF4A90D9) : const Color(0xFFF5F5F5),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(30),
         ),
         child: Center(
           child: Text(

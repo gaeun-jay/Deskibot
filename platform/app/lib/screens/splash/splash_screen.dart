@@ -50,22 +50,35 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF4A90D9),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Image.asset('assets/images/character.png', width: 120, height: 120),
-            const SizedBox(height: 16),
-            const Text(
-              'Deskibot',
-              style: TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
+      body: Container(
+        width: double.infinity,
+        height: double.infinity,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xCC0069FF),
+              Color(0x000069FF),
+            ],
+          ),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Image.asset('assets/images/Home_character.png', width: 140, height: 140),
+              const SizedBox(height: 16),
+              const Text(
+                'Deskibot',
+                style: TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                  color: Color.fromRGBO(40, 129, 255, 1),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
