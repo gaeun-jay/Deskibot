@@ -182,14 +182,12 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       return;
     }
-
     if (_selectedCategoryId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('카테고리를 선택해주세요')),
       );
       return;
     }
-
     if (!_noTimeSet && (_selectedStartTime == null || _selectedEndTime == null)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('시간을 선택해주세요')),
@@ -275,87 +273,171 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFFFFFFF),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 40),
-              _buildHeader(),
-              const SizedBox(height: 15),
-              Text(
-                _formatTodayHeader(),
-                style: const TextStyle(fontSize: 13, color: Colors.grey),
+      backgroundColor: const Color(0xFFF2F5FA),
+      body: Column(
+        children: [
+          _buildHeader(),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              child: Column(
+                children: [
+                  if (_showForm) ...[
+                    _buildForm(),
+                    const SizedBox(height: 12),
+                  ],
+                  _buildTodoList(),
+                  const SizedBox(height: 12),
+                  _buildFocusStats(),
+                  const SizedBox(height: 80),
+                ],
               ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () => _showForm ? _closeForm() : setState(() => _showForm = true),
-                  icon: const Icon(Icons.add, color: Colors.white),
-                  label: const Text(
-                    '할일 추가하기',
-                    style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF4A90D9),
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
-              ),
-              if (_showForm) ...[
-                const SizedBox(height: 12),
-                _buildForm(),
-              ],
-              const SizedBox(height: 20),
-              _buildTodoList(),
-              const SizedBox(height: 16),
-              _buildFocusStats(),
-              const SizedBox(height: 80),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
 
   Widget _buildHeader() {
-    return Row(
-      children: [
-        Image.asset(
-          'assets/images/character.png',
-          width: 48,
-          height: 48,
-          errorBuilder: (_, _, _) =>
-              const Icon(Icons.smart_toy, size: 48, color: Color(0xFF4A90D9)),
-        ),
-        const SizedBox(width: 12),
-        const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '일정 관리',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF4A90D9),
-              ),
-            ),
-            Text(
-              '오늘의 할일을 정리하고 하루를 시작하세요.',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
-            ),
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color(0xCC0069FF),
+            Color(0x000069FF),
           ],
         ),
-        const Spacer(),
-        IconButton(
-          onPressed: _onLogout,
-          icon: const Icon(Icons.logout, color: Colors.grey),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 30,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.25),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: Image.asset(
+                      'assets/images/Launcher_icon.png',
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Deskibot',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: _onLogout,
+                    child: const Icon(
+                      Icons.logout,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '일정 관리',
+                        style: TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          shadows: [
+                            Shadow(
+                              offset: Offset(1, 1),
+                              blurRadius: 1,
+                              color: Color(0x80000000),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '오늘의 할일을 정리하고 하루를 시작하세요.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white.withValues(alpha: 1),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _formatTodayHeader(),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white.withValues(alpha: 0.9),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Spacer(),
+                  Image.asset(
+                    'assets/images/Home_character.png',
+                    width: 90,
+                    errorBuilder: (_, _, _) =>
+                        const Icon(Icons.smart_toy, size: 80, color: Colors.white),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () =>
+                      _showForm ? _closeForm() : setState(() => _showForm = true),
+                  icon: Icon(
+                    _showForm ? Icons.close : Icons.add,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                  label: Text(
+                    _showForm ? '닫기' : '할일 추가하기',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0x4D0073FF),
+                    elevation: 0,
+                    shadowColor: Colors.transparent,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(30),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
-      ],
+      ),
     );
   }
 
@@ -376,17 +458,30 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          _formLabel('할일'),
+          const SizedBox(height: 8),
           TextField(
             controller: _contentController,
             decoration: InputDecoration(
               hintText: '할일을 입력하세요',
-              labelText: '할일',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              hintStyle: const TextStyle(color: Colors.grey, fontSize: 14),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: Color(0xFF0069FF)),
+              ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             ),
           ),
           const SizedBox(height: 16),
-          const Text('카테고리', style: TextStyle(fontSize: 13, color: Colors.black54)),
+          _formLabel('카테고리'),
           const SizedBox(height: 8),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
@@ -400,16 +495,19 @@ class _HomeScreenState extends State<HomeScreen> {
                       _selectedCategoryId = selected ? null : cat.id;
                     }),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                       decoration: BoxDecoration(
-                        color: selected ? const Color(0xFF4A90D9) : const Color(0xFFE8E8E8),
-                        borderRadius: BorderRadius.circular(16),
+                        color: selected
+                            ? const Color(0xFF0069FF)
+                            : const Color(0xFFF0F0F0),
+                        borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
                         cat.name,
                         style: TextStyle(
                           color: selected ? Colors.white : Colors.black54,
                           fontSize: 13,
+                          fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
                         ),
                       ),
                     ),
@@ -423,6 +521,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               Checkbox(
                 value: _noTimeSet,
+                activeColor: const Color(0xFF0069FF),
                 onChanged: (v) => setState(() {
                   _noTimeSet = v ?? false;
                   if (_noTimeSet) {
@@ -433,159 +532,139 @@ class _HomeScreenState extends State<HomeScreen> {
                   }
                 }),
               ),
-              const Text('시간 설정하지 않기', style: TextStyle(fontSize: 14, color: Colors.black54)),
+              const Text('시간 설정하지 않기',
+                  style: TextStyle(fontSize: 14, color: Colors.black54)),
             ],
           ),
-          Opacity(
-            opacity: _noTimeSet ? 0.4 : 1,
-            child: IgnorePointer(
-              ignoring: _noTimeSet,
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('시작 시간', style: TextStyle(fontSize: 14, color: Colors.black54)),
-                      GestureDetector(
-                        onTap: _pickStartTime,
-                        child: Row(
-                          children: [
-                            Text(
-                              _timeStr(_selectedStartTime),
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: _selectedStartTime == null ? Colors.grey : Colors.black87,
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            const Icon(Icons.access_time, size: 18, color: Colors.grey),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('종료 시간', style: TextStyle(fontSize: 14, color: Colors.black54)),
-                      GestureDetector(
-                        onTap: _pickEndTime,
-                        child: Row(
-                          children: [
-                            Text(
-                              _timeStr(_selectedEndTime),
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: _selectedEndTime == null ? Colors.grey : Colors.black87,
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            const Icon(Icons.access_time, size: 18, color: Colors.grey),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
+          if (!_noTimeSet) ...[
+            _timeRow('시작 시간', _timeStr(_selectedStartTime), _pickStartTime),
+            const SizedBox(height: 10),
+            _timeRow('종료 시간', _timeStr(_selectedEndTime), _pickEndTime),
+          ],
           if (_noTimeSet) ...[
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('마감 시간', style: TextStyle(fontSize: 14, color: Colors.black54)),
-                GestureDetector(
-                  onTap: _pickDeadlineTime,
-                  child: Row(
-                    children: [
-                      Text(
-                        _timeStr(_selectedDeadlineTime),
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: _selectedDeadlineTime == null ? Colors.grey : Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      const Icon(Icons.access_time, size: 18, color: Colors.grey),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+            const SizedBox(height: 4),
+            _timeRow('마감 시간 (선택)', _timeStr(_selectedDeadlineTime), _pickDeadlineTime),
           ],
           const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('날짜', style: TextStyle(fontSize: 14, color: Colors.black54)),
-              GestureDetector(
-                onTap: _pickDate,
-                child: Row(
-                  children: [
-                    Text(
-                      _formatDate(_selectedDate),
-                      style: const TextStyle(fontSize: 14, color: Colors.black87),
-                    ),
-                    const SizedBox(width: 6),
-                    const Icon(Icons.calendar_today, size: 18, color: Colors.grey),
-                  ],
-                ),
-              ),
-            ],
-          ),
+          _dateRow(),
           const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('알림', style: TextStyle(fontSize: 14, color: Colors.black54)),
-              DropdownButton<String>(
-                value: _notifyOption,
-                underline: const SizedBox(),
-                style: const TextStyle(fontSize: 13, color: Colors.black87),
-                items: const [
-                  DropdownMenuItem(value: '없음', child: Text('없음')),
-                  DropdownMenuItem(value: '마감 당일 아침 9시', child: Text('마감 당일 아침 9시')),
-                  DropdownMenuItem(value: '마감 30분 전', child: Text('마감 30분 전')),
-                ],
-                onChanged: (v) {
-                  if (v != null) setState(() => _notifyOption = v);
-                },
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
+          _notifyRow(),
+          const SizedBox(height: 20),
           Row(
             children: [
               Expanded(
+                flex: 1,
                 child: OutlinedButton(
                   onPressed: _closeForm,
                   style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: Colors.grey),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    side: const BorderSide(color: Color(0xFFDDDDDD)),
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(30),
+                    ),
                   ),
                   child: const Text('취소', style: TextStyle(color: Colors.grey)),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
+                flex: 3,
                 child: ElevatedButton(
                   onPressed: _addTodo,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF4A90D9),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    backgroundColor: const Color(0xFF0069FF),
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(30),
+                    ),
+                    elevation: 0,
                   ),
-                  child: Text(_editingTodoId == null ? '추가하기' : '수정하기', style: const TextStyle(color: Colors.white)),
+                  child: Text(
+                    _editingTodoId == null ? '추가하기' : '수정하기',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
                 ),
               ),
             ],
           ),
         ],
       ),
+    );
+  }
+
+  Widget _formLabel(String text) {
+    return Text(
+      text,
+      style: const TextStyle(fontSize: 13, color: Colors.black54, fontWeight: FontWeight.w500),
+    );
+  }
+
+  Widget _timeRow(String label, String value, VoidCallback onTap) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: const TextStyle(fontSize: 14, color: Colors.black54)),
+        GestureDetector(
+          onTap: onTap,
+          child: Row(
+            children: [
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: value == '--:--' ? Colors.grey : Colors.black87,
+                ),
+              ),
+              const SizedBox(width: 6),
+              const Icon(Icons.access_time, size: 18, color: Colors.grey),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _dateRow() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        const Text('날짜', style: TextStyle(fontSize: 14, color: Colors.black54)),
+        GestureDetector(
+          onTap: _pickDate,
+          child: Row(
+            children: [
+              Text(
+                _formatDate(_selectedDate),
+                style: const TextStyle(fontSize: 14, color: Colors.black87),
+              ),
+              const SizedBox(width: 6),
+              const Icon(Icons.calendar_today, size: 18, color: Colors.grey),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _notifyRow() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        const Text('알림', style: TextStyle(fontSize: 14, color: Colors.black54)),
+        DropdownButton<String>(
+          value: _notifyOption,
+          underline: const SizedBox(),
+          style: const TextStyle(fontSize: 13, color: Colors.black87),
+          items: const [
+            DropdownMenuItem(value: '없음', child: Text('없음')),
+            DropdownMenuItem(value: '마감 당일 아침 9시', child: Text('마감 당일 아침 9시')),
+            DropdownMenuItem(value: '마감 30분 전', child: Text('마감 30분 전')),
+          ],
+          onChanged: (v) {
+            if (v != null) setState(() => _notifyOption = v);
+          },
+        ),
+      ],
     );
   }
 
@@ -599,7 +678,13 @@ class _HomeScreenState extends State<HomeScreen> {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFD1D1D1), width: 1),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -607,9 +692,19 @@ class _HomeScreenState extends State<HomeScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
-                    '오늘 할일',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  const Row(
+                    children: [
+                      Text('📋', style: TextStyle(fontSize: 18)),
+                      SizedBox(width: 6),
+                      Text(
+                        '오늘 할일',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ],
                   ),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -619,7 +714,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     child: Text(
                       '전체 ${todos.length}',
-                      style: const TextStyle(fontSize: 12, color: Color(0xFF4A90D9)),
+                      style: const TextStyle(
+                          fontSize: 12, color: Color(0xFF0069FF)),
                     ),
                   ),
                 ],
@@ -629,7 +725,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 const Center(
                   child: Padding(
                     padding: EdgeInsets.symmetric(vertical: 16),
-                    child: Text('할일이 없습니다', style: TextStyle(color: Colors.grey)),
+                    child: Text('할일이 없습니다',
+                        style: TextStyle(color: Colors.grey)),
                   ),
                 )
               else
@@ -642,19 +739,24 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildTodoItem(TodoModel todo) {
-    final category = _categories.where((c) => c.id == todo.categoryId).firstOrNull;
+    final category =
+        _categories.where((c) => c.id == todo.categoryId).firstOrNull;
 
     return GestureDetector(
       onLongPress: () => _showTodoActions(todo),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(
           children: [
             GestureDetector(
               onTap: () => TodoService().toggleTodo(todo.id, !todo.isDone),
               child: Icon(
-                todo.isDone ? Icons.check_circle : Icons.radio_button_unchecked,
-                color: todo.isDone ? const Color(0xFF4A90D9) : Colors.grey,
+                todo.isDone
+                    ? Icons.check_circle
+                    : Icons.radio_button_unchecked,
+                color: todo.isDone
+                    ? const Color(0xFF0069FF)
+                    : const Color(0xFFCCCCCC),
                 size: 22,
               ),
             ),
@@ -692,7 +794,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 child: Text(
                   category.name,
-                  style: const TextStyle(fontSize: 11, color: Color(0xFF4A90D9)),
+                  style: const TextStyle(
+                      fontSize: 11, color: Color(0xFF0069FF)),
                 ),
               ),
             ],
@@ -715,54 +818,102 @@ class _HomeScreenState extends State<HomeScreen> {
       stream: _focusSessionsStream,
       builder: (context, snapshot) {
         final sessions = snapshot.data ?? [];
-        final totalDuration = sessions.fold<int>(0, (sum, s) => sum + s.actualDuration);
-        final drowsyCount = sessions.fold<int>(0, (sum, s) => sum + s.drowsyEventCount);
-        final drowsyDuration = sessions.fold<int>(0, (sum, s) => sum + s.drowsyDuration);
-        final phoneCount = sessions.fold<int>(0, (sum, s) => sum + s.phoneEventCount);
-        final phoneDuration = sessions.fold<int>(0, (sum, s) => sum + s.phoneDuration);
+        final totalDuration =
+            sessions.fold<int>(0, (sum, s) => sum + s.actualDuration);
+        final drowsyCount =
+            sessions.fold<int>(0, (sum, s) => sum + s.drowsyEventCount);
+        final drowsyDuration =
+            sessions.fold<int>(0, (sum, s) => sum + s.drowsyDuration);
+        final phoneCount =
+            sessions.fold<int>(0, (sum, s) => sum + s.phoneEventCount);
+        final phoneDuration =
+            sessions.fold<int>(0, (sum, s) => sum + s.phoneDuration);
         final (focusValue, focusUnit) = _formatFocusDuration(totalDuration);
         final focusRate = totalDuration <= 0
             ? '-'
-            : (((totalDuration - drowsyDuration - phoneDuration) / totalDuration) * 100)
-                .clamp(0, 100)
-                .round()
-                .toString();
+            : (((totalDuration - drowsyDuration - phoneDuration) /
+                            totalDuration) *
+                        100)
+                    .clamp(0, 100)
+                    .round()
+                    .toString();
 
         return Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFD1D1D1), width: 1),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                '오늘의 집중 현황',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF8E8E8E)),
+              const Row(
+                children: [
+                  Text('🔥', style: TextStyle(fontSize: 18)),
+                  SizedBox(width: 6),
+                  Text(
+                    '오늘의 집중 현황',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 12),
               if (sessions.isEmpty)
                 const Center(
                   child: Padding(
                     padding: EdgeInsets.symmetric(vertical: 16),
-                    child: Text('아직 오늘의 세션이 없어요', style: TextStyle(color: Colors.grey)),
+                    child: Text('아직 오늘의 세션이 없어요',
+                        style: TextStyle(color: Colors.grey)),
                   ),
                 )
               else
                 GridView.count(
                   crossAxisCount: 2,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
-                  childAspectRatio: 1.4,
+                  childAspectRatio: 1.5,
                   children: [
-                    _StatCard(label: '집중 시간', value: focusValue, unit: focusUnit, emoji: '🔥'),
-                    _StatCard(label: '집중률', value: focusRate, unit: focusRate == '-' ? '' : '%', emoji: '👀'),
-                    _StatCard(label: '졸음 감지', value: drowsyCount.toString(), unit: '회', emoji: '😴'),
-                    _StatCard(label: '폰 사용', value: phoneCount.toString(), unit: '회', emoji: '📱'),
+                    _StatCard(
+                      label: '집중 시간',
+                      value: focusValue,
+                      unit: focusUnit,
+                      emoji: '⏱️',
+                      bgColor: const Color(0xFFDEEBFF),
+                    ),
+                    _StatCard(
+                      label: '집중률',
+                      value: focusRate,
+                      unit: focusRate == '-' ? '' : '%',
+                      emoji: '👀',
+                      bgColor: const Color(0xFFDEEBFF),
+                    ),
+                    _StatCard(
+                      label: '졸음 감지',
+                      value: drowsyCount.toString(),
+                      unit: '회',
+                      emoji: '😴',
+                      bgColor: const Color(0xFFFFF0D6),
+                    ),
+                    _StatCard(
+                      label: '스마트폰 사용',
+                      value: phoneCount.toString(),
+                      unit: '회',
+                      emoji: '📱',
+                      bgColor: const Color(0xFFFFE0E0),
+                    ),
                   ],
                 ),
             ],
@@ -778,67 +929,57 @@ class _StatCard extends StatelessWidget {
   final String value;
   final String unit;
   final String emoji;
+  final Color bgColor;
 
   const _StatCard({
     required this.label,
     required this.value,
     required this.unit,
     required this.emoji,
+    required this.bgColor,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      clipBehavior: Clip.antiAlias,
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: bgColor,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFD1D1D1), width: 1),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            color: const Color(0xFFEEF4FF),
-            child: Text(
-              label,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF4A90D9),
-              ),
-            ),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 12, color: Colors.black54),
           ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  RichText(
-                    text: TextSpan(
-                      children: [
-                        TextSpan(
-                          text: value,
-                          style: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF4A90D9),
-                          ),
-                        ),
-                        TextSpan(
-                          text: unit,
-                          style: const TextStyle(fontSize: 14, color: Colors.grey),
-                        ),
-                      ],
+          const Spacer(),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              RichText(
+                text: TextSpan(
+                  children: [
+                    TextSpan(
+                      text: value,
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
                     ),
-                  ),
-                  Text(emoji, style: const TextStyle(fontSize: 40)),
-                ],
+                    TextSpan(
+                      text: unit,
+                      style: const TextStyle(
+                          fontSize: 13, color: Colors.black54),
+                    ),
+                  ],
+                ),
               ),
-            ),
+              Text(emoji, style: const TextStyle(fontSize: 24)),
+            ],
           ),
         ],
       ),
