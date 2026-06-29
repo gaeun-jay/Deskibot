@@ -1,20 +1,17 @@
-
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:deskibot/models/todo_model.dart';
 import 'package:deskibot/models/focus_block_model.dart';
 import 'package:deskibot/services/timetable_service.dart';
 
-// ── 색상 팔레트 ───────────────────────────────────────────────────
+// ── 색상 ─────────────────────────────────────────────────────────────
+const _kBlue1 = Color(0xFF4491FF);
+const _kBlue2 = Color(0xFF68A6FF);
+const _kMain  = Color(0xFF2881FF);
 
-const List<String> _kPalette = [
-  '#4A90D9', '#7B68EE', '#E74C3C', '#E67E22',
-  '#F1C40F', '#27AE60', '#1ABC9C', '#EC407A',
-  '#546E7A', '#8D6E63', '#8E24AA', '#607D8B',
-];
 
 Color _hexColor(String hex) =>
     Color(int.parse(hex.replaceFirst('#', '0xFF')));
-
 
 String _minutesToTime(int minutes) {
   final h = minutes ~/ 60;
@@ -22,8 +19,7 @@ String _minutesToTime(int minutes) {
   return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
 }
 
-// ── 화면 ──────────────────────────────────────────────────────────
-
+// ── 화면 ─────────────────────────────────────────────────────────────
 class TimetableScreen extends StatefulWidget {
   const TimetableScreen({super.key});
 
@@ -35,21 +31,31 @@ class _TimetableScreenState extends State<TimetableScreen> {
   final _service = TimetableService();
 
   DateTime _selectedDate = DateTime.now();
-  bool _showTodo = true;
-  bool _showScheduled = true;   // 하위: 시간 지정 Todo → 타임테이블
-  bool _showUnscheduled = true; // 하위: 시간 미지정 Todo → 상단 섹션
-  bool _showFocus = true;
+  bool _showFocus = false; // 토글: false=Todo only, true=Todo+집중세션
 
   List<TodoItem> _todos = [];
   List<FocusBlock> _focusBlocks = [];
+  Map<String, String> _categoryColors = {};
   bool _isLoading = true;
-
   bool _wasVisible = false;
 
   @override
   void initState() {
     super.initState();
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+    ));
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+    ));
+    super.dispose();
   }
 
   @override
@@ -65,48 +71,51 @@ class _TimetableScreenState extends State<TimetableScreen> {
     return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
   }
 
+  String get _dateLabel {
+    final now = DateTime.now();
+    final isToday = _selectedDate.year == now.year &&
+        _selectedDate.month == now.month &&
+        _selectedDate.day == now.day;
+    final s = '${_selectedDate.month}월 ${_selectedDate.day}일';
+    return isToday ? '$s (오늘)' : s;
+  }
+
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
-    final todos = await _service.getTodosForDate(_dateKey);
-    final blocks = await _service.getFocusBlocksForDate(_dateKey);
+    final results = await Future.wait([
+      _service.getTodosForDate(_dateKey),
+      _service.getFocusBlocksForDate(_dateKey),
+      _service.getCategories(),
+    ]);
     if (!mounted) return;
     setState(() {
-      _todos = todos;
-      _focusBlocks = blocks;
+      _todos = results[0] as List<TodoItem>;
+      _focusBlocks = results[1] as List<FocusBlock>;
+      _categoryColors = results[2] as Map<String, String>;
       _isLoading = false;
     });
   }
 
-  void _prevDay() {
-    setState(() => _selectedDate = _selectedDate.subtract(const Duration(days: 1)));
-    _loadData();
-  }
-
-  void _nextDay() {
-    setState(() => _selectedDate = _selectedDate.add(const Duration(days: 1)));
-    _loadData();
-  }
-
   List<TodoItem> get _unscheduled => _todos.where((t) => !t.hasTime).toList();
-  List<TodoItem> get _scheduled => _todos.where((t) => t.hasTime).toList();
+  List<TodoItem> get _scheduled   => _todos.where((t) => t.hasTime).toList();
 
-  // ── 블록 레이아웃 계산 ─────────────────────────────────────────
-
+  // ── 블록 레이아웃 계산 ──────────────────────────────────────────────
   List<_BlockLayout> _buildLayouts() {
     final layouts = <_BlockLayout>[];
 
-    if (_showTodo && _showScheduled) {
-      for (final todo in _scheduled) {
-        layouts.add(_BlockLayout(
-          id: todo.id,
-          title: todo.content,
-          startMinutes: todo.startMinutes,
-          endMinutes: todo.endMinutes,
-          isFocus: false,
-          isDone: todo.isDone,
-          color: todo.color,
-        ));
-      }
+    for (final todo in _scheduled) {
+      final color = (todo.categoryId != null && _categoryColors.containsKey(todo.categoryId))
+          ? _categoryColors[todo.categoryId]!
+          : todo.color;
+      layouts.add(_BlockLayout(
+        id: todo.id,
+        title: todo.content,
+        startMinutes: todo.startMinutes,
+        endMinutes: todo.endMinutes,
+        isFocus: false,
+        isDone: todo.isDone,
+        color: color,
+      ));
     }
 
     if (_showFocus) {
@@ -130,7 +139,6 @@ class _TimetableScreenState extends State<TimetableScreen> {
   void _assignColumns(List<_BlockLayout> layouts) {
     layouts.sort((a, b) => a.startMinutes.compareTo(b.startMinutes));
     final columnEnds = <int>[];
-
     for (final l in layouts) {
       int col = 0;
       for (; col < columnEnds.length; col++) {
@@ -143,7 +151,6 @@ class _TimetableScreenState extends State<TimetableScreen> {
         columnEnds[col] = l.endMinutes;
       }
     }
-
     for (final l in layouts) {
       int maxCol = l.column;
       for (final o in layouts) {
@@ -156,50 +163,189 @@ class _TimetableScreenState extends State<TimetableScreen> {
     }
   }
 
-  // ── 빌드 ──────────────────────────────────────────────────────
-
+  // ── 빌드 ───────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    final statusBarH = MediaQuery.of(context).padding.top;
+    final headerH = statusBarH + 170.0;
+
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _Header(selectedDate: _selectedDate, onPrev: _prevDay, onNext: _nextDay),
-            _FilterToggle(
-              showTodo: _showTodo,
-              showScheduled: _showScheduled,
-              showUnscheduled: _showUnscheduled,
-              showFocus: _showFocus,
-              onTodoChanged: (v) => setState(() => _showTodo = v),
-              onScheduledChanged: (v) => setState(() => _showScheduled = v),
-              onUnscheduledChanged: (v) => setState(() => _showUnscheduled = v),
-              onFocusChanged: (v) => setState(() => _showFocus = v),
-            ),
-            if (_unscheduled.isNotEmpty && _showTodo && _showUnscheduled)
-              _UnscheduledSection(
-                items: _unscheduled,
-                onToggle: (todo) async {
-                  await _service.toggleDone(todo.id, !todo.isDone);
-                  _loadData();
-                },
-                onDelete: (todo) async {
-                  await _service.deleteTodo(todo.id);
-                  _loadData();
-                },
-                onAssignTime: _showAssignTimeSheet,
+      backgroundColor: const Color(0xFFF0F4FF),
+      body: Stack(
+        children: [
+          // ── 1) 그라디언트 배경 ───────────────────────────────
+          Positioned.fill(
+            child: Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [_kBlue1, _kBlue2, Color(0xFFD6E4FF), Color(0xFFF0F4FF)],
+                  stops: [0.0, 0.12, 0.28, 1.0],
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                ),
               ),
-            Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator(color: Color(0xFF4A90D9)))
-                  : _TimeGrid(
-                      layouts: _buildLayouts(),
-                      onFocusTap: _showEditFocusLabelSheet,
-                      onTodoTap: _showTodoOptionsSheet,
-                    ),
             ),
-          ],
-        ),
+          ),
+
+          // ── 2) 캐릭터 (흰 카드 뒤, 왼쪽) ───────────────────
+          Positioned(
+            top: statusBarH - 10,
+            left: -5,
+            child: Image.asset(
+              'assets/images/character_timetable.png',
+              width: 160,
+              height: 178,
+              fit: BoxFit.contain,
+            ),
+          ),
+
+          // ── 3) 헤더 텍스트 (오른쪽) ─────────────────────────
+          Positioned(
+            top: statusBarH + 44,
+            left: 155,
+            right: 16,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                Text(
+                  'Daily Log',
+                  style: TextStyle(
+                    fontSize: 30,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                    shadows: [
+                      Shadow(
+                        offset: Offset(1, 1),
+                        blurRadius: 1,
+                        color: Color(0x80000000),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(height: 6),
+                Text(
+                  '하루 일정을 시간대별로 확인하세요.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // ── 5) 콘텐츠 영역 (시간미정 + 토글 + 흰 카드) ──────
+          Positioned(
+            top: headerH,
+            left: 14,
+            right: 14,
+            bottom: 0,
+            child: Column(
+              children: [
+                // 시간 미정 섹션 (흰 카드 위)
+                if (_unscheduled.isNotEmpty) ...[
+                  _UnscheduledSection(
+                    items: _unscheduled,
+                    categoryColors: _categoryColors,
+                    onToggle: (todo) async {
+                      await _service.toggleDone(todo.id, !todo.isDone);
+                      _loadData();
+                    },
+                    onDelete: (todo) async {
+                      await _service.deleteTodo(todo.id);
+                      _loadData();
+                    },
+                    onAssignTime: _showAssignTimeSheet,
+                  ),
+                ],
+
+                // 토글 (타임테이블 위 오른쪽)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: _FocusToggle(
+                    showFocus: _showFocus,
+                    onChanged: (v) => setState(() => _showFocus = v),
+                  ),
+                ),
+
+                // 흰 카드 (타임 그리드)
+                Expanded(
+                  child: Container(
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.only(
+                        topLeft: Radius.circular(24),
+                        topRight: Radius.circular(24),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Color(0x18000000),
+                          blurRadius: 12,
+                          offset: Offset(0, -4),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        // 날짜 네비게이션
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.chevron_left, size: 22),
+                                onPressed: () {
+                                  setState(() => _selectedDate =
+                                      _selectedDate.subtract(const Duration(days: 1)));
+                                  _loadData();
+                                },
+                                padding: EdgeInsets.zero,
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              Text(
+                                _dateLabel,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF1E1E1E),
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.chevron_right, size: 22),
+                                onPressed: () {
+                                  setState(() => _selectedDate =
+                                      _selectedDate.add(const Duration(days: 1)));
+                                  _loadData();
+                                },
+                                padding: EdgeInsets.zero,
+                                visualDensity: VisualDensity.compact,
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // 타임 그리드
+                        Expanded(
+                          child: _isLoading
+                              ? const Center(
+                                  child: CircularProgressIndicator(color: _kMain))
+                              : _TimeGrid(
+                                  layouts: _buildLayouts(),
+                                  onFocusTap: _showEditFocusLabelSheet,
+                                  onTodoTap: _showTodoOptionsSheet,
+                                ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -210,8 +356,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => Padding(
         padding: EdgeInsets.only(
           left: 20, right: 20, top: 24,
@@ -238,7 +383,8 @@ class _TimetableScreenState extends State<TimetableScreen> {
               controller: ctrl,
               autofocus: true,
               decoration: InputDecoration(
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10)),
                 contentPadding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
               ),
@@ -256,15 +402,14 @@ class _TimetableScreenState extends State<TimetableScreen> {
                   _loadData();
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF4A90D9),
+                  backgroundColor: _kMain,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10)),
                 ),
                 child: const Text('저장',
-                    style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ),
           ],
@@ -277,8 +422,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
       builder: (_) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -293,17 +437,18 @@ class _TimetableScreenState extends State<TimetableScreen> {
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-              child: Text(
-                title,
-                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
+              child: Text(title,
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w600),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis),
             ),
             const Divider(height: 1),
             ListTile(
-              leading: const Icon(Icons.delete_outline, color: Color(0xFFE74C3C)),
-              title: const Text('삭제', style: TextStyle(color: Color(0xFFE74C3C))),
+              leading:
+                  const Icon(Icons.delete_outline, color: Color(0xFFE74C3C)),
+              title: const Text('삭제',
+                  style: TextStyle(color: Color(0xFFE74C3C))),
               onTap: () async {
                 Navigator.pop(context);
                 await _service.deleteTodo(todoId);
@@ -321,198 +466,56 @@ class _TimetableScreenState extends State<TimetableScreen> {
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (_) => _AssignTimeSheet(todo: todo, service: _service, onSaved: _loadData),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) =>
+          _AssignTimeSheet(todo: todo, service: _service, onSaved: _loadData),
     );
   }
 }
 
-// ── 헤더 ──────────────────────────────────────────────────────────
-
-class _Header extends StatelessWidget {
-  final DateTime selectedDate;
-  final VoidCallback onPrev;
-  final VoidCallback onNext;
-
-  const _Header({required this.selectedDate, required this.onPrev, required this.onNext});
-
-  String get _label {
-    final now = DateTime.now();
-    final isToday = selectedDate.year == now.year &&
-        selectedDate.month == now.month &&
-        selectedDate.day == now.day;
-    final s = '${selectedDate.month}월 ${selectedDate.day}일';
-    return isToday ? '$s (오늘)' : s;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 8, 4),
-      child: Row(
-        children: [
-          const Text(
-            '타임테이블',
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF4A90D9)),
-          ),
-          const Spacer(),
-          IconButton(
-            icon: const Icon(Icons.chevron_left, size: 22),
-            onPressed: onPrev,
-            padding: EdgeInsets.zero,
-            visualDensity: VisualDensity.compact,
-          ),
-          Text(_label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-          IconButton(
-            icon: const Icon(Icons.chevron_right, size: 22),
-            onPressed: onNext,
-            padding: EdgeInsets.zero,
-            visualDensity: VisualDensity.compact,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ── 필터 체크박스 ──────────────────────────────────────────────────
-
-class _FilterToggle extends StatelessWidget {
-  final bool showTodo;
-  final bool showScheduled;
-  final bool showUnscheduled;
+// ── 슬라이드 토글 (Todo / Todo+집중세션) ────────────────────────────
+class _FocusToggle extends StatelessWidget {
   final bool showFocus;
-  final ValueChanged<bool> onTodoChanged;
-  final ValueChanged<bool> onScheduledChanged;
-  final ValueChanged<bool> onUnscheduledChanged;
-  final ValueChanged<bool> onFocusChanged;
+  final ValueChanged<bool> onChanged;
 
-  const _FilterToggle({
-    required this.showTodo,
-    required this.showScheduled,
-    required this.showUnscheduled,
-    required this.showFocus,
-    required this.onTodoChanged,
-    required this.onScheduledChanged,
-    required this.onUnscheduledChanged,
-    required this.onFocusChanged,
-  });
+  const _FocusToggle({required this.showFocus, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // To-do 체크박스 + 하위 토글
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _FilterCheckbox(
-                label: 'To-do',
-                color: const Color(0xFF4A90D9),
-                checked: showTodo,
-                onChanged: onTodoChanged,
-              ),
-              // 하위 토글: To-do 체크 시에만 표시
-              AnimatedSize(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeInOut,
-                alignment: Alignment.topLeft,
-                child: showTodo
-                    ? Padding(
-                        padding: const EdgeInsets.only(top: 6, left: 4),
-                        child: Row(
-                          children: [
-                            _FilterCheckbox(
-                              label: '시간 지정',
-                              color: const Color(0xFF4A90D9),
-                              checked: showScheduled,
-                              onChanged: onScheduledChanged,
-                              small: true,
-                            ),
-                            const SizedBox(width: 12),
-                            _FilterCheckbox(
-                              label: '시간 미지정',
-                              color: const Color(0xFF4A90D9),
-                              checked: showUnscheduled,
-                              onChanged: onUnscheduledChanged,
-                              small: true,
-                            ),
-                          ],
-                        ),
-                      )
-                    : const SizedBox.shrink(),
-              ),
-            ],
-          ),
-          const SizedBox(width: 20),
-          // 집중세션 체크박스
-          Padding(
-            padding: const EdgeInsets.only(top: 2),
-            child: _FilterCheckbox(
-              label: '집중세션',
-              color: const Color(0xFF7B68EE),
-              checked: showFocus,
-              onChanged: onFocusChanged,
-            ),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
-    );
-  }
-}
-
-class _FilterCheckbox extends StatelessWidget {
-  final String label;
-  final Color color;
-  final bool checked;
-  final ValueChanged<bool> onChanged;
-  final bool small;
-
-  const _FilterCheckbox({
-    required this.label,
-    required this.color,
-    required this.checked,
-    required this.onChanged,
-    this.small = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final size = small ? 16.0 : 20.0;
-    final fontSize = small ? 11.0 : 13.0;
-    return GestureDetector(
-      onTap: () => onChanged(!checked),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            width: size,
-            height: size,
-            decoration: BoxDecoration(
-              color: checked ? color : Colors.white,
-              border: Border.all(
-                color: checked ? color : const Color(0xFFCCCCCC),
-                width: 1.8,
-              ),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: checked
-                ? Icon(Icons.check, color: Colors.white, size: size - 4)
-                : null,
-          ),
-          const SizedBox(width: 5),
           Text(
-            label,
+            showFocus ? 'ToDo 랑 집중 세션 같이 보기' : 'ToDo 만 보기',
             style: TextStyle(
-              fontSize: fontSize,
+              fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: checked ? color : const Color(0xFFAAAAAA),
+              color: showFocus ? _kMain : const Color(0xFF888888),
             ),
+          ),
+          Switch(
+            value: showFocus,
+            onChanged: onChanged,
+            thumbColor: WidgetStateProperty.all(Colors.white),
+            trackColor: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.selected)) return _kMain;
+              return const Color(0xFFCCCCCC);
+            }),
+            trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
         ],
       ),
@@ -520,16 +523,17 @@ class _FilterCheckbox extends StatelessWidget {
   }
 }
 
-// ── 시간 미정 섹션 ─────────────────────────────────────────────────
-
+// ── 시간 미정 섹션 ──────────────────────────────────────────────────
 class _UnscheduledSection extends StatelessWidget {
   final List<TodoItem> items;
+  final Map<String, String> categoryColors;
   final ValueChanged<TodoItem> onToggle;
   final ValueChanged<TodoItem> onDelete;
   final ValueChanged<TodoItem> onAssignTime;
 
   const _UnscheduledSection({
     required this.items,
+    required this.categoryColors,
     required this.onToggle,
     required this.onDelete,
     required this.onAssignTime,
@@ -538,14 +542,15 @@ class _UnscheduledSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE0E8FF)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withAlpha(18),
-            blurRadius: 8,
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 6,
             offset: const Offset(0, 2),
           ),
         ],
@@ -553,32 +558,38 @@ class _UnscheduledSection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 헤더
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: const BoxDecoration(
-              color: Color(0xFFD6E8FF),
+              color: Color(0xFFE9F2FF),
               borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
             ),
             child: const Text(
               '하루 일정',
               style: TextStyle(
                 fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF333333),
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF6286B8),
               ),
             ),
           ),
-          // 아이템 목록
           ...List.generate(items.length, (i) {
             final todo = items[i];
             return Column(
               children: [
                 if (i > 0)
-                  const Divider(height: 1, thickness: 1, indent: 16, endIndent: 16, color: Color(0xFFF0F0F0)),
+                  const Divider(
+                      height: 1,
+                      thickness: 1,
+                      indent: 16,
+                      endIndent: 16,
+                      color: Color(0xFFF0F0F0)),
                 _UnscheduledTile(
                   todo: todo,
+                  chipColor: categoryColors.containsKey(todo.categoryId)
+                      ? _hexColor(categoryColors[todo.categoryId]!)
+                      : _hexColor(todo.color),
                   onToggle: () => onToggle(todo),
                   onDelete: () => onDelete(todo),
                   onAssignTime: () => onAssignTime(todo),
@@ -594,12 +605,14 @@ class _UnscheduledSection extends StatelessWidget {
 
 class _UnscheduledTile extends StatelessWidget {
   final TodoItem todo;
+  final Color chipColor;
   final VoidCallback onToggle;
   final VoidCallback onDelete;
   final VoidCallback onAssignTime;
 
   const _UnscheduledTile({
     required this.todo,
+    required this.chipColor,
     required this.onToggle,
     required this.onDelete,
     required this.onAssignTime,
@@ -607,10 +620,9 @@ class _UnscheduledTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final chipColor = _hexColor(todo.color);
     return GestureDetector(
       onTap: onToggle,
-      onLongPress: () => _showDeleteConfirm(context),
+      onLongPress: onAssignTime,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
         child: Row(
@@ -621,16 +633,20 @@ class _UnscheduledTile extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w500,
-                  color: todo.isDone ? const Color(0xFFAAAAAA) : Colors.black87,
-                  decoration: todo.isDone ? TextDecoration.lineThrough : null,
+                  color: todo.isDone
+                      ? const Color(0xFFAAAAAA)
+                      : Colors.black87,
+                  decoration:
+                      todo.isDone ? TextDecoration.lineThrough : null,
                 ),
               ),
             ),
             if (todo.categoryId != null)
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: chipColor.withAlpha(36),
+                  color: chipColor.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
@@ -646,7 +662,7 @@ class _UnscheduledTile extends StatelessWidget {
               onTap: onAssignTime,
               child: const Padding(
                 padding: EdgeInsets.only(left: 10),
-                child: Icon(Icons.schedule, size: 18, color: Color(0xFF4A90D9)),
+                child: Icon(Icons.schedule, size: 18, color: _kMain),
               ),
             ),
           ],
@@ -655,84 +671,25 @@ class _UnscheduledTile extends StatelessWidget {
     );
   }
 
-  void _showDeleteConfirm(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (_) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.delete_outline, color: Color(0xFFE74C3C)),
-              title: const Text('삭제', style: TextStyle(color: Color(0xFFE74C3C))),
-              onTap: () {
-                Navigator.pop(context);
-                onDelete();
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
-// ── 색상 팔레트 피커 ──────────────────────────────────────────────
+// ── 색상 팔레트 피커 ─────────────────────────────────────────────────
 
-class _ColorPicker extends StatelessWidget {
-  final String selected;
-  final ValueChanged<String> onSelect;
-
-  const _ColorPicker({required this.selected, required this.onSelect});
-
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 10,
-      runSpacing: 10,
-      children: _kPalette.map((hex) {
-        final color = _hexColor(hex);
-        final isSelected = hex == selected;
-        return GestureDetector(
-          onTap: () => onSelect(hex),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-              border: isSelected ? Border.all(color: Colors.black54, width: 2.5) : null,
-            ),
-            child: isSelected
-                ? const Icon(Icons.check, color: Colors.white, size: 16)
-                : null,
-          ),
-        );
-      }).toList(),
-    );
-  }
-}
-
-// ── 타임 그리드 ───────────────────────────────────────────────────
-
+// ── 타임 그리드 ──────────────────────────────────────────────────────
 class _TimeGrid extends StatelessWidget {
   final List<_BlockLayout> layouts;
   final void Function(String id, String label)? onFocusTap;
   final void Function(String id, String title)? onTodoTap;
 
-  const _TimeGrid({required this.layouts, this.onFocusTap, this.onTodoTap});
+  const _TimeGrid(
+      {required this.layouts, this.onFocusTap, this.onTodoTap});
 
-  static const double _hourH = 80.0;
-  static const double _labelW = 52.0;
+  static const double _hourH = 64.0;
+  static const double _labelW = 56.0;
 
   @override
   Widget build(BuildContext context) {
     const double totalH = 24 * _hourH;
-
     return LayoutBuilder(
       builder: (ctx, bc) {
         final totalW = bc.maxWidth;
@@ -744,18 +701,18 @@ class _TimeGrid extends StatelessWidget {
             height: totalH,
             child: Stack(
               children: [
-                // 시간 레이블 + 구분선
                 ...List.generate(24, (h) {
                   final y = h * _hourH;
                   return Stack(children: [
                     Positioned(
-                      top: y - 9,
+                      top: y - 8,
                       left: 0,
-                      width: _labelW - 6,
+                      width: _labelW - 8,
                       child: Text(
                         '${h.toString().padLeft(2, '0')}:00',
                         textAlign: TextAlign.right,
-                        style: const TextStyle(fontSize: 11, color: Color(0xFFAAAAAA)),
+                        style: const TextStyle(
+                            fontSize: 11, color: Color(0xFFBBBBBB)),
                       ),
                     ),
                     Positioned(
@@ -763,16 +720,15 @@ class _TimeGrid extends StatelessWidget {
                       left: _labelW,
                       width: gridW,
                       height: 1,
-                      child: const ColoredBox(color: Color(0xFFEEEEEE)),
+                      child: const ColoredBox(color: Color(0xFFEDEDED)),
                     ),
                   ]);
                 }),
-
-                // 블록들
                 ...layouts.map((l) {
                   final top = l.startMinutes * _hourH / 60;
                   final height =
-                      ((l.endMinutes - l.startMinutes) * _hourH / 60).clamp(24.0, double.infinity);
+                      ((l.endMinutes - l.startMinutes) * _hourH / 60)
+                          .clamp(24.0, double.infinity);
                   final colW = gridW / l.totalColumns;
                   final left = _labelW + l.column * colW + 2;
 
@@ -781,13 +737,13 @@ class _TimeGrid extends StatelessWidget {
                   final Color textC;
 
                   if (l.isFocus) {
-                    accent = const Color(0xFF4A90D9);
-                    bg = const Color(0xFFE3F2FF);
+                    accent = _kMain;
+                    bg = const Color(0xFFE8F1FF);
                     textC = const Color(0xFF1565C0);
                   } else {
                     accent = _hexColor(l.color);
-                    bg = accent.withAlpha(28);
-                    textC = accent;
+                    bg = Color.alphaBlend(accent.withValues(alpha: 0.13), Colors.white);
+                    textC = Color.alphaBlend(accent.withValues(alpha: 0.75), Colors.black);
                   }
 
                   return Positioned(
@@ -800,49 +756,70 @@ class _TimeGrid extends StatelessWidget {
                           ? () => onFocusTap?.call(l.id, l.title)
                           : () => onTodoTap?.call(l.id, l.title),
                       child: Container(
-                        clipBehavior: Clip.hardEdge,
                         decoration: BoxDecoration(
-                          color: bg,
                           borderRadius: BorderRadius.circular(10),
-                          border: Border(left: BorderSide(color: accent, width: 4)),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.07),
+                              blurRadius: 4,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
                         ),
-                        padding: EdgeInsets.fromLTRB(
-                          10,
-                          height < 30 ? 4 : 8,
-                          8,
-                          height < 30 ? 2 : 6,
-                        ),
-                        child: height < 18
-                            ? const SizedBox.shrink()
-                            : Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Flexible(
-                                    child: Text(
-                                      l.title,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.bold,
-                                        color: textC,
-                                        decoration: l.isDone
-                                            ? TextDecoration.lineThrough
-                                            : null,
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
-                                      maxLines: 1,
-                                    ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Container(width: 4, color: accent),
+                              Expanded(
+                                child: Container(
+                                  color: bg,
+                                  padding: EdgeInsets.fromLTRB(
+                                    9,
+                                    height < 30 ? 4 : 8,
+                                    8,
+                                    height < 30 ? 2 : 6,
                                   ),
-                                  if (height > 46)
-                                    Text(
-                                      '${_minutesToTime(l.startMinutes)} ~ ${_minutesToTime(l.endMinutes)}',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: textC.withAlpha(180),
-                                      ),
-                                    ),
-                                ],
+                                  child: height < 18
+                                      ? const SizedBox.shrink()
+                                      : Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Flexible(
+                                              child: Text(
+                                                l.title,
+                                                style: TextStyle(
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: textC,
+                                                  decoration: l.isDone
+                                                      ? TextDecoration
+                                                          .lineThrough
+                                                      : null,
+                                                ),
+                                                overflow: TextOverflow.ellipsis,
+                                                maxLines: 1,
+                                              ),
+                                            ),
+                                            if (height > 46)
+                                              Text(
+                                                '${_minutesToTime(l.startMinutes)} ~ ${_minutesToTime(l.endMinutes)}',
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: textC.withValues(
+                                                      alpha: 0.7),
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                ),
                               ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                   );
@@ -856,48 +833,7 @@ class _TimeGrid extends StatelessWidget {
   }
 }
 
-// ── 시간 선택 버튼 ─────────────────────────────────────────────────
-
-class _TimePickerButton extends StatelessWidget {
-  final String label;
-  final VoidCallback onTap;
-
-  const _TimePickerButton({required this.label, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final hasValue = RegExp(r'^\d{2}:\d{2}$').hasMatch(label);
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          border: Border.all(color: const Color(0xFFCCCCCC)),
-          borderRadius: BorderRadius.circular(10),
-          color: hasValue ? const Color(0xFFEEF4FF) : Colors.white,
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.access_time, size: 16, color: Color(0xFF4A90D9)),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                color: hasValue ? const Color(0xFF4A90D9) : const Color(0xFF888888),
-                fontWeight: hasValue ? FontWeight.w600 : FontWeight.normal,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ── 내부 블록 레이아웃 데이터 ─────────────────────────────────────
-
+// ── 내부 블록 레이아웃 데이터 ────────────────────────────────────────
 class _BlockLayout {
   final String id;
   final String title;
@@ -920,14 +856,53 @@ class _BlockLayout {
   });
 }
 
-// ── 시간 지정 바텀시트 (미정 Todo → 타임테이블 이동) ──────────────
+// ── 시간 지정 바텀시트 ───────────────────────────────────────────────
+class _TimePickerButton extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+
+  const _TimePickerButton({required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final hasValue = RegExp(r'^\d{2}:\d{2}$').hasMatch(label);
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          border: Border.all(color: const Color(0xFFCCCCCC)),
+          borderRadius: BorderRadius.circular(10),
+          color: hasValue ? const Color(0xFFEEF4FF) : Colors.white,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.access_time, size: 16, color: _kMain),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                color: hasValue ? _kMain : const Color(0xFF888888),
+                fontWeight:
+                    hasValue ? FontWeight.w600 : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _AssignTimeSheet extends StatefulWidget {
   final TodoItem todo;
   final TimetableService service;
   final VoidCallback onSaved;
 
-  const _AssignTimeSheet({required this.todo, required this.service, required this.onSaved});
+  const _AssignTimeSheet(
+      {required this.todo, required this.service, required this.onSaved});
 
   @override
   State<_AssignTimeSheet> createState() => _AssignTimeSheetState();
@@ -936,35 +911,31 @@ class _AssignTimeSheet extends StatefulWidget {
 class _AssignTimeSheetState extends State<_AssignTimeSheet> {
   String? _startTime;
   String? _deadlineTime;
-  late String _color;
 
   @override
   void initState() {
     super.initState();
-    _color = widget.todo.color;
   }
 
   String _fmt(TimeOfDay t) =>
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 
   Future<void> _pickStart() async {
-    final p = await showTimePicker(context: context, initialTime: TimeOfDay.now());
+    final p =
+        await showTimePicker(context: context, initialTime: TimeOfDay.now());
     if (p != null) setState(() => _startTime = _fmt(p));
   }
 
   Future<void> _pickDeadline() async {
-    final p = await showTimePicker(context: context, initialTime: TimeOfDay.now());
+    final p =
+        await showTimePicker(context: context, initialTime: TimeOfDay.now());
     if (p != null) setState(() => _deadlineTime = _fmt(p));
   }
 
   Future<void> _save() async {
     if (_startTime == null) return;
-
-    await widget.service.updateTodoTime(widget.todo.id, _startTime!, _deadlineTime);
-    if (_color != widget.todo.color) {
-      await widget.service.updateTodoColor(widget.todo.id, _color);
-    }
-
+    await widget.service.updateTodoTime(
+        widget.todo.id, _startTime!, _deadlineTime);
     if (!mounted) return;
     Navigator.pop(context);
     widget.onSaved();
@@ -993,7 +964,8 @@ class _AssignTimeSheetState extends State<_AssignTimeSheet> {
           ),
           Text(
             widget.todo.content,
-            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+            style:
+                const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
@@ -1005,33 +977,37 @@ class _AssignTimeSheetState extends State<_AssignTimeSheet> {
           const SizedBox(height: 16),
           Row(
             children: [
-              Expanded(child: _TimePickerButton(label: _startTime ?? '시작 시간 (필수)', onTap: _pickStart)),
+              Expanded(
+                  child: _TimePickerButton(
+                      label: _startTime ?? '시작 시간 (필수)',
+                      onTap: _pickStart)),
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 8),
                 child: Text('~', style: TextStyle(color: Colors.grey)),
               ),
-              Expanded(child: _TimePickerButton(label: _deadlineTime ?? '마감 시간', onTap: _pickDeadline)),
+              Expanded(
+                  child: _TimePickerButton(
+                      label: _deadlineTime ?? '마감 시간',
+                      onTap: _pickDeadline)),
             ],
           ),
-          const SizedBox(height: 14),
-          const Text('색상', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF555555))),
-          const SizedBox(height: 8),
-          _ColorPicker(selected: _color, onSelect: (h) => setState(() => _color = h)),
           const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
               onPressed: _startTime != null ? _save : null,
               style: ElevatedButton.styleFrom(
-                backgroundColor: _hexColor(_color),
+                backgroundColor: _kMain,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
                 disabledBackgroundColor: const Color(0xFFCCCCCC),
               ),
               child: const Text(
                 '타임테이블에 추가',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                style:
+                    TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
             ),
           ),

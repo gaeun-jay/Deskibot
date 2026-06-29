@@ -73,7 +73,7 @@ class TimetableService {
     if (uid == null) return [];
 
     final snapshot = await _focusRef(uid)
-        .where('start_date', isEqualTo: date)
+        .where('date', isEqualTo: date)
         .get();
 
     return snapshot.docs
@@ -119,6 +119,22 @@ class TimetableService {
     if (uid == null) return;
 
     await _focusRef(uid).doc(sessionId).update({'title': label});
+  }
+
+  // ── 카테고리 조회 ─────────────────────────────────────────────
+
+  Future<Map<String, String>> getCategories() async {
+    final uid = await _getUid();
+    if (uid == null) return {};
+
+    final doc = await _db.collection('users').doc(uid).get();
+    if (!doc.exists) return {};
+
+    final cats = (doc.data()!['categories'] as List<dynamic>?) ?? [];
+    return {
+      for (final c in cats)
+        (c['id'] as String): (c['color'] as String),
+    };
   }
 
   // ── 일간 집중 통계 조회 ───────────────────────────────────────

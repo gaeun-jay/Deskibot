@@ -169,6 +169,7 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
           _stopwatch.status == TimerStatus.paused) {
         final pausedAt = _stopwatch.pausedAt ?? now;
         final pauseMin = now.difference(pausedAt).inMinutes;
+        final pauseMs = now.difference(pausedAt).inMilliseconds;
         final pauseEvent = PauseEvent(
           pausedAtDate: _dateStr(pausedAt),
           pausedAtTime: _timeStr(pausedAt),
@@ -178,9 +179,12 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
         _stopwatch = _stopwatch.copyWith(
           status: TimerStatus.running,
           totalPauseDuration: _stopwatch.totalPauseDuration + pauseMin,
+          totalPauseMs: _stopwatch.totalPauseMs + pauseMs,
           pauseEvents: [..._stopwatch.pauseEvents, pauseEvent],
           clearPausedAt: true,
         );
+        // ESP32 resume 시 RTDB total_pause_sec도 업데이트
+        _service.resumeStopwatch(now.difference(pausedAt).inSeconds);
         WakelockPlus.enable();
         _startTicker();
       }
@@ -365,7 +369,7 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
     final now = DateTime.now();
     if (_pomodoro.drowsyStartedAt != null) _closeDrowsyEvent(now);
     if (_pomodoro.phoneStartedAt != null) _closePhoneEvent(now);
-    await _service.endPomodoro(_pomodoro);
+    await _service.endPomodoro(_pomodoro, isForced: true);
     _pomodoro = const PomodoroState();
     WakelockPlus.disable();
     notifyListeners();
@@ -378,7 +382,7 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
     final now = DateTime.now();
     if (_pomodoro.drowsyStartedAt != null) _closeDrowsyEvent(now);
     if (_pomodoro.phoneStartedAt != null) _closePhoneEvent(now);
-    _service.endPomodoro(_pomodoro);
+    _service.endPomodoro(_pomodoro, isForced: false);
     _pomodoro = _pomodoro.copyWith(
       remainingSec: 0,
       status: TimerStatus.finished,
@@ -440,6 +444,7 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (_stopwatch.pausedAt != null) {
       final pausedAt = _stopwatch.pausedAt!;
       final pauseMin = now.difference(pausedAt).inMinutes;
+      final pauseMs = now.difference(pausedAt).inMilliseconds;
       final pauseEvent = PauseEvent(
         pausedAtDate: _dateStr(pausedAt),
         pausedAtTime: _timeStr(pausedAt),
@@ -449,6 +454,7 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
       _stopwatch = _stopwatch.copyWith(
         status: TimerStatus.running,
         totalPauseDuration: _stopwatch.totalPauseDuration + pauseMin,
+        totalPauseMs: _stopwatch.totalPauseMs + pauseMs,
         pauseEvents: [..._stopwatch.pauseEvents, pauseEvent],
         clearPausedAt: true,
       );
@@ -458,6 +464,17 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     WakelockPlus.enable();
     _startTicker();
+    notifyListeners();
+  }
+
+  void recordLap(int elapsedMs) {
+    final lapNumber = _stopwatch.lapRecords.length + 1;
+    _stopwatch = _stopwatch.copyWith(
+      lapRecords: [
+        ..._stopwatch.lapRecords,
+        LapRecord(lapNumber: lapNumber, elapsedMs: elapsedMs),
+      ],
+    );
     notifyListeners();
   }
 

@@ -64,6 +64,8 @@ class TodoItem {
         'date': date,
         'start_time': startTime,
         'end_time': endTime,
+        // start_time 있으면 deadline_time = end_time, 없으면 별도 마감 시각
+        'deadline_time': endTime,
         'notify': notify,
         'notify_before': notifyBefore,
         'is_done': isDone,

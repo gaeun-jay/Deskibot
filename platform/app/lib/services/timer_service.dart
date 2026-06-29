@@ -3,14 +3,14 @@
 // RealtimeDB (신호용, 덮어쓰기)
 //   users/{uid}/status/current_state
 //     session_id, type, state, duration,
-//     is_detecting_drowsy, is_detecting_phone
+//     is_detecting_drowsy, is_detecting_phone, drowsy, phone
 //
 // Firestore (영구 기록)
 //   users/{uid}/focus_sessions/{sessionId}
-//     [뽀모도로] type, title, date, start_date, start_time,
+//     [뽀모도로] type, title, date, start_time,
 //               end_date, end_time, planned_duration, actual_duration,
 //               drowsy_events[], phone_events[]
-//     [스톱워치] type, title, date, start_date, start_time,
+//     [스톱워치] type, title, date, start_time,
 //               end_date, end_time, actual_duration,
 //               pause_events[], total_pause_duration
 //
@@ -74,12 +74,13 @@ class TimerService {
         'total_pause_sec': 0,
         'is_detecting_drowsy': false,
         'is_detecting_phone': false,
+        'drowsy': false,
+        'phone': false,
       }),
       _focusSessions.doc(sessionId).set({
         'type': 'pomodoro',
         'title': '뽀모도로',
         'date': _dateStr(now),
-        'start_date': _dateStr(now),
         'start_time': _timeStr(now),
         'end_date': null,
         'end_time': null,
@@ -94,9 +95,11 @@ class TimerService {
     return sessionId;
   }
 
-  Future<void> endPomodoro(PomodoroState state) async {
+  Future<void> endPomodoro(PomodoroState state, {bool isForced = false}) async {
     final now = DateTime.now();
     final actualDuration = ((state.durationMin * 60 - state.remainingSec) / 60).round();
+    // 계획 시간 완료 여부: 잔여 시간 5초 이내면 completed
+    final isCompleted = !isForced && state.remainingSec <= 5;
 
     await Future.wait([
       _currentStateRef.set({
@@ -109,6 +112,8 @@ class TimerService {
         'total_pause_sec': 0,
         'is_detecting_drowsy': false,
         'is_detecting_phone': false,
+        'drowsy': false,
+        'phone': false,
       }),
       _focusSessions.doc(state.sessionId).update({
         'end_date': _dateStr(now),
@@ -116,7 +121,7 @@ class TimerService {
         'actual_duration': actualDuration,
         'drowsy_events': state.drowsyEvents.map((e) => e.toMap()).toList(),
         'phone_events': state.phoneEvents.map((e) => e.toMap()).toList(),
-        'status': 'completed',
+        'status': isCompleted ? 'completed' : 'incomplete',
       }),
     ]);
 
@@ -164,12 +169,13 @@ class TimerService {
         'total_pause_sec': 0,
         'is_detecting_drowsy': false,
         'is_detecting_phone': false,
+        'drowsy': false,
+        'phone': false,
       }),
       _focusSessions.doc(sessionId).set({
         'type': 'stopwatch',
         'title': '스톱워치',
         'date': _dateStr(now),
-        'start_date': _dateStr(now),
         'start_time': _timeStr(now),
         'end_date': null,
         'end_time': null,
@@ -213,6 +219,8 @@ class TimerService {
         'total_pause_sec': 0,
         'is_detecting_drowsy': false,
         'is_detecting_phone': false,
+        'drowsy': false,
+        'phone': false,
       }),
       _focusSessions.doc(sw.sessionId).update({
         'end_date': _dateStr(now),
@@ -242,6 +250,8 @@ class TimerService {
       'total_pause_sec': 0,
       'is_detecting_drowsy': false,
       'is_detecting_phone': false,
+      'drowsy': false,
+      'phone': false,
     });
   }
 
@@ -257,7 +267,6 @@ class TimerService {
       'type': 'pomodoro',
       'title': '뽀모도로',
       'date': _dateStr(startedAt),
-      'start_date': _dateStr(startedAt),
       'start_time': _timeStr(startedAt),
       'end_date': null,
       'end_time': null,
@@ -277,7 +286,6 @@ class TimerService {
       'type': 'stopwatch',
       'title': '스톱워치',
       'date': _dateStr(startedAt),
-      'start_date': _dateStr(startedAt),
       'start_time': _timeStr(startedAt),
       'end_date': null,
       'end_time': null,
@@ -320,7 +328,6 @@ class TimerService {
       'type': type,
       'title': type == 'stopwatch' ? '스톱워치' : '뽀모도로',
       'date': '',
-      'start_date': '',
       'start_time': '',
       'end_date': '',
       'end_time': '',

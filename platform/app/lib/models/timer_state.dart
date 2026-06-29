@@ -54,6 +54,13 @@ class PhoneEvent {
       };
 }
 
+// ── 구간 기록 (스톱워치 전용) ────────────────────────────────────
+class LapRecord {
+  final int lapNumber;
+  final int elapsedMs;
+  const LapRecord({required this.lapNumber, required this.elapsedMs});
+}
+
 // ── 일시정지 이벤트 ────────────────────────────────────────────
 // Firestore focus_sessions.pause_events[] (스톱워치 전용)
 class PauseEvent {
@@ -152,7 +159,8 @@ class PomodoroState {
 // ── 스톱워치 상태 ──────────────────────────────────────────────
 class StopwatchState {
   final int elapsedSec;
-  final int totalPauseDuration; // 분
+  final int totalPauseDuration; // 분 (Firestore 저장용)
+  final int totalPauseMs;       // 밀리초 (센티초 디스플레이용)
   final TimerStatus status;
   final DateTime? startedAt;
   final DateTime? pausedAt;
@@ -161,10 +169,12 @@ class StopwatchState {
   final String startDate;
   final String startTime;
   final List<PauseEvent> pauseEvents;
+  final List<LapRecord> lapRecords;
 
   const StopwatchState({
     this.elapsedSec = 0,
     this.totalPauseDuration = 0,
+    this.totalPauseMs = 0,
     this.status = TimerStatus.idle,
     this.startedAt,
     this.pausedAt,
@@ -173,11 +183,13 @@ class StopwatchState {
     this.startDate = '',
     this.startTime = '',
     this.pauseEvents = const [],
+    this.lapRecords = const [],
   });
 
   StopwatchState copyWith({
     int? elapsedSec,
     int? totalPauseDuration,
+    int? totalPauseMs,
     TimerStatus? status,
     DateTime? startedAt,
     DateTime? pausedAt,
@@ -186,11 +198,13 @@ class StopwatchState {
     String? startDate,
     String? startTime,
     List<PauseEvent>? pauseEvents,
+    List<LapRecord>? lapRecords,
     bool clearPausedAt = false,
   }) {
     return StopwatchState(
       elapsedSec: elapsedSec ?? this.elapsedSec,
       totalPauseDuration: totalPauseDuration ?? this.totalPauseDuration,
+      totalPauseMs: totalPauseMs ?? this.totalPauseMs,
       status: status ?? this.status,
       startedAt: startedAt ?? this.startedAt,
       pausedAt: clearPausedAt ? null : (pausedAt ?? this.pausedAt),
@@ -199,6 +213,7 @@ class StopwatchState {
       startDate: startDate ?? this.startDate,
       startTime: startTime ?? this.startTime,
       pauseEvents: pauseEvents ?? this.pauseEvents,
+      lapRecords: lapRecords ?? this.lapRecords,
     );
   }
 }
