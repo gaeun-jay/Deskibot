@@ -370,16 +370,7 @@ class TimerService {
       'phone_duration': FieldValue.increment(phoneDuration),
     };
 
-    final week = _isoWeek(date);
-    final month = date.substring(0, 7); // "YYYY-MM"
-    final year = date.substring(0, 4); // "YYYY"
-
-    await Future.wait([
-      _aggRef('daily', date).set(delta, SetOptions(merge: true)),
-      _aggRef('weekly', week).set(delta, SetOptions(merge: true)),
-      _aggRef('monthly', month).set(delta, SetOptions(merge: true)),
-      _aggRef('yearly', year).set(delta, SetOptions(merge: true)),
-    ]);
+    await _aggRef('daily', date).set(delta, SetOptions(merge: true));
   }
 
   // ══════════════════════════════════════════════════════════
@@ -394,11 +385,4 @@ class TimerService {
       '${dt.hour.toString().padLeft(2, '0')}:'
       '${dt.minute.toString().padLeft(2, '0')}';
 
-  String _isoWeek(String dateStr) {
-    final dt = DateTime.parse(dateStr);
-    final jan4 = DateTime(dt.year, 1, 4);
-    final week1Monday = jan4.subtract(Duration(days: jan4.weekday - 1));
-    final weekNum = dt.difference(week1Monday).inDays ~/ 7 + 1;
-    return '${dt.year}-W${weekNum.toString().padLeft(2, '0')}';
-  }
 }
