@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:deskibot/models/todo_model.dart';
+import 'package:deskibot/models/todo_item_model.dart';
 import 'package:deskibot/models/focus_block_model.dart';
 import 'package:deskibot/services/timetable_service.dart';
 

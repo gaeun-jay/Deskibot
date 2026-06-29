@@ -1,7 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
-import 'package:deskibot/models/todo_model.dart';
+import 'package:deskibot/models/todo_item_model.dart';
 import 'package:deskibot/models/focus_block_model.dart';
 
 class TimetableService {
