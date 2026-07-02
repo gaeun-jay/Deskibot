@@ -40,6 +40,8 @@ dependencies:
   shared_preferences: ^2.5.5 # 로그인 상태 유지할 때 사용
   firebase_messaging: ^16.3.0 # FCM 푸시 알림 패키지 
   crypto: ^3.0.7
+  glassmorphism: ^3.0.0 # 글래스 효과 패키지
+  http: ^1.2.0 # FastAPI 연결용
 
 dev_dependencies:
   flutter_test:
