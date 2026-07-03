@@ -6,8 +6,9 @@ class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Center(
-        child: Text('설정'),
+      appBar: AppBar(title: const Text('설정')),
+      body: ListView(
+        children: const [],
       ),
     );
   }
