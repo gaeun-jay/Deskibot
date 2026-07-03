@@ -130,7 +130,7 @@ class TimetableService {
     final doc = await _db.collection('users').doc(uid).get();
     if (!doc.exists) return {};
 
-    final cats = (doc.data()!['categories'] as List<dynamic>?) ?? [];
+    final cats = ((doc.data()!['settings'] as Map<String, dynamic>?)?['categories'] as List<dynamic>?) ?? [];
     return {
       for (final c in cats)
         (c['id'] as String): (c['color'] as String),
