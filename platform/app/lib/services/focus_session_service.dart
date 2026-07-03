@@ -18,7 +18,7 @@ class FocusSessionService {
           .collection('users')
           .doc(uid)
           .collection('focus_sessions')
-          .where('start_date', isEqualTo: today)
+          .where('date', isEqualTo: today)
           .snapshots()
           .map((snap) => snap.docs
               .map((doc) => FocusSessionModel.fromMap(doc.id, doc.data()))
