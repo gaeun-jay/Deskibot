@@ -119,8 +119,6 @@ class TimerService {
         'end_date': _dateStr(now),
         'end_time': _timeStr(now),
         'actual_duration': actualDuration,
-        'drowsy_events': state.drowsyEvents.map((e) => e.toMap()).toList(),
-        'phone_events': state.phoneEvents.map((e) => e.toMap()).toList(),
         'status': isCompleted ? 'completed' : 'incomplete',
       }),
     ]);

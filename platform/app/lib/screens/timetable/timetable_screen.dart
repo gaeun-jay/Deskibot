@@ -31,7 +31,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
   final _service = TimetableService();
 
   DateTime _selectedDate = DateTime.now();
-  bool _showFocus = false; // 토글: false=Todo only, true=Todo+집중세션
+  bool _showFocus = false;
 
   List<TodoItem> _todos = [];
   List<FocusBlock> _focusBlocks = [];
@@ -244,6 +244,15 @@ class _TimetableScreenState extends State<TimetableScreen> {
             bottom: 0,
             child: Column(
               children: [
+                // 토글 (타임테이블 위 오른쪽)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: _FocusToggle(
+                    showFocus: _showFocus,
+                    onChanged: (v) => setState(() => _showFocus = v),
+                  ),
+                ),
+
                 // 시간 미정 섹션 (흰 카드 위)
                 if (_unscheduled.isNotEmpty) ...[
                   _UnscheduledSection(
@@ -260,15 +269,6 @@ class _TimetableScreenState extends State<TimetableScreen> {
                     onAssignTime: _showAssignTimeSheet,
                   ),
                 ],
-
-                // 토글 (타임테이블 위 오른쪽)
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: _FocusToggle(
-                    showFocus: _showFocus,
-                    onChanged: (v) => setState(() => _showFocus = v),
-                  ),
-                ),
 
                 // 흰 카드 (타임 그리드)
                 Expanded(
@@ -473,7 +473,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
   }
 }
 
-// ── 슬라이드 토글 (Todo / Todo+집중세션) ────────────────────────────
+// ── 집중세션 토글 ────────────────────────────────────────────────────
 class _FocusToggle extends StatelessWidget {
   final bool showFocus;
   final ValueChanged<bool> onChanged;

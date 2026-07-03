@@ -24,8 +24,7 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
   PomodoroState get pomodoro => _pomodoro;
   StopwatchState get stopwatch => _stopwatch;
 
-  // 앱에서 시작한 스톱워치인지 여부
-  // session_id가 로컬에 있으면 앱에서 시작한 것
+  bool _pomodoroStartedByApp = false;
   bool _stopwatchStartedByApp = false;
   bool get isStopwatchStartedByApp => _stopwatchStartedByApp;
 
@@ -56,8 +55,10 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
       final type = data['type'] as String?;
       final sessionId = data['session_id'] as String? ?? '';
       final duration = data['duration'] as int?;
-      final isDrowsy = data['is_detecting_drowsy'] as bool? ?? false;
-      final isPhone = data['is_detecting_phone'] as bool? ?? false;
+      final isDrowsy = (data['is_detecting_drowsy'] as bool? ?? false) ||
+          (data['drowsy'] as bool? ?? false);
+      final isPhone = (data['is_detecting_phone'] as bool? ?? false) ||
+          (data['phone'] as bool? ?? false);
       final now = DateTime.now();
 
       // started_at 역산: Realtime DB에 저장된 실제 시작 시각으로 경과 시간 계산
@@ -86,12 +87,7 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
             startDate: _dateStr(sessionStartedAt),
             startTime: _timeStr(sessionStartedAt),
           );
-          // Firestore 문서가 없을 수 있으므로 선생성 (upsert)
-          _service.createPomodoroDoc(
-            sessionId: sessionId,
-            durationMin: duration,
-            startedAt: sessionStartedAt,
-          );
+          // 로봇이 시작한 세션 — HW가 Firestore 전담, 앱은 UI만 동기화
           WakelockPlus.enable();
           _startTicker();
         } else if (type == 'stopwatch' &&
@@ -203,21 +199,6 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
       }
 
-      // ── 감지 이벤트 처리 ──
-      // false → true: 감지 시작
-      // true → false: 감지 종료 → 이벤트 완성
-      if (!_prevDrowsy && isDrowsy) {
-        _pomodoro = _pomodoro.copyWith(drowsyStartedAt: now);
-      } else if (_prevDrowsy && !isDrowsy) {
-        _closeDrowsyEvent(now);
-      }
-
-      if (!_prevPhone && isPhone) {
-        _pomodoro = _pomodoro.copyWith(phoneStartedAt: now);
-      } else if (_prevPhone && !isPhone) {
-        _closePhoneEvent(now);
-      }
-
       // ── 알람 제어 (뽀모도로 실행 중에만) ──
       if (_pomodoro.status == TimerStatus.running) {
         final wasAlarming = _prevDrowsy || _prevPhone;
@@ -234,38 +215,6 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
 
       notifyListeners();
     });
-  }
-
-  void _closeDrowsyEvent(DateTime endTime) {
-    if (_pomodoro.drowsyStartedAt == null) return;
-    final start = _pomodoro.drowsyStartedAt!;
-    final event = DrowsyEvent(
-      startDate: _dateStr(start),
-      startTime: _timeStr(start),
-      endDate: _dateStr(endTime),
-      endTime: _timeStr(endTime),
-      totalDuration: endTime.difference(start).inMinutes,
-    );
-    _pomodoro = _pomodoro.copyWith(
-      drowsyEvents: [..._pomodoro.drowsyEvents, event],
-      clearDrowsyStart: true,
-    );
-  }
-
-  void _closePhoneEvent(DateTime endTime) {
-    if (_pomodoro.phoneStartedAt == null) return;
-    final start = _pomodoro.phoneStartedAt!;
-    final event = PhoneEvent(
-      startDate: _dateStr(start),
-      startTime: _timeStr(start),
-      endDate: _dateStr(endTime),
-      endTime: _timeStr(endTime),
-      totalDuration: endTime.difference(start).inMinutes,
-    );
-    _pomodoro = _pomodoro.copyWith(
-      phoneEvents: [..._pomodoro.phoneEvents, event],
-      clearPhoneStart: true,
-    );
   }
 
   // ══════════════════════════════════════════════════════════
@@ -343,6 +292,7 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
   // POMODORO 컨트롤
   // ══════════════════════════════════════════════════════════
   Future<void> startPomodoro(int durationMin) async {
+    _pomodoroStartedByApp = true;
     final now = DateTime.now();
     final sessionId = await _service.startPomodoro(durationMin);
 
@@ -366,10 +316,10 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> forceEndPomodoro() async {
     _ticker?.cancel();
     _stopAlarm();
-    final now = DateTime.now();
-    if (_pomodoro.drowsyStartedAt != null) _closeDrowsyEvent(now);
-    if (_pomodoro.phoneStartedAt != null) _closePhoneEvent(now);
-    await _service.endPomodoro(_pomodoro, isForced: true);
+    if (_pomodoroStartedByApp) {
+      await _service.endPomodoro(_pomodoro, isForced: true);
+    }
+    _pomodoroStartedByApp = false;
     _pomodoro = const PomodoroState();
     WakelockPlus.disable();
     notifyListeners();
@@ -379,10 +329,10 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _finishPomodoro() {
     _ticker?.cancel();
     _stopAlarm();
-    final now = DateTime.now();
-    if (_pomodoro.drowsyStartedAt != null) _closeDrowsyEvent(now);
-    if (_pomodoro.phoneStartedAt != null) _closePhoneEvent(now);
-    _service.endPomodoro(_pomodoro, isForced: false);
+    if (_pomodoroStartedByApp) {
+      _service.endPomodoro(_pomodoro, isForced: false);
+    }
+    _pomodoroStartedByApp = false;
     _pomodoro = _pomodoro.copyWith(
       remainingSec: 0,
       status: TimerStatus.finished,
