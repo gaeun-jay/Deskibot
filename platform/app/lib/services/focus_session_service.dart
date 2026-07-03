@@ -25,4 +25,19 @@ class FocusSessionService {
               .toList());
     });
   }
+
+  // 2026-06-23 날짜 가져오기 _ 테스트용
+  Future<List<FocusSessionModel>> getSessionsByDate(String date) async {
+    final uid = await AuthService().getCurrentUid();
+    if (uid == null) return [];
+    final snapshot = await _db
+        .collection('users')
+        .doc(uid)
+        .collection('focus_sessions')
+        .where('date', isEqualTo: date)
+        .get();
+    return snapshot.docs
+        .map((doc) => FocusSessionModel.fromMap(doc.id, doc.data()))
+        .toList();
+  }
 }
