@@ -64,4 +64,8 @@ class TodoService {
         .doc(todoId)
         .update({'is_done': isDone});
   }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> origin/app-develop

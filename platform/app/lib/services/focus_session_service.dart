@@ -25,6 +25,7 @@ class FocusSessionService {
               .toList());
     });
   }
+<<<<<<< HEAD
 
   // 2026-06-23 날짜 가져오기 _ 테스트용
   Future<List<FocusSessionModel>> getSessionsByDate(String date) async {
@@ -40,4 +41,6 @@ class FocusSessionService {
         .map((doc) => FocusSessionModel.fromMap(doc.id, doc.data()))
         .toList();
   }
+=======
+>>>>>>> origin/app-develop
 }

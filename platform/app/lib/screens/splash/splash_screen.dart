@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:deskibot/services/auth_service.dart';
 import 'package:deskibot/screens/auth/login_screen.dart';
@@ -35,6 +36,23 @@ class _SplashScreenState extends State<SplashScreen> {
     }
     debugPrint('-------------------------');
 
+    if (isLoggedIn) {
+      final uid = prefs.getString('uid');
+      if (uid != null) {
+        await FirebaseDatabase.instance.ref('users/$uid/status/current_state').set({
+          'session_id': '',
+          'type': '',
+          'state': '',
+          'duration': 0,
+          'started_at': '',
+          'paused_at': '',
+          'total_pause_sec': 0,
+          'is_detecting_drowsy': false,
+          'is_detecting_phone': false,
+        });
+      }
+    }
+
     if (!mounted) return;
 
     Navigator.pushReplacement(
@@ -50,22 +68,35 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF4A90D9),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Image.asset('assets/images/character.png', width: 120, height: 120),
-            const SizedBox(height: 16),
-            const Text(
-              'Deskibot',
-              style: TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
+      body: Container(
+        width: double.infinity,
+        height: double.infinity,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xCC0069FF),
+              Color(0x000069FF),
+            ],
+          ),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Image.asset('assets/images/Home_character.png', width: 140, height: 140),
+              const SizedBox(height: 16),
+              const Text(
+                'Deskibot',
+                style: TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                  color: Color.fromRGBO(40, 129, 255, 1),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
