@@ -692,16 +692,20 @@ class _HomeScreenState extends State<HomeScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Row(
+                  Row(
                     children: [
-                      Text('📋', style: TextStyle(fontSize: 18)),
-                      SizedBox(width: 6),
-                      Text(
+                      Image.asset(
+                        'assets/images/todoboard.png',
+                        width: 35,
+                        height: 35,
+                      ),
+                      const SizedBox(width: 6),
+                      const Text(
                         '오늘 할일',
                         style: TextStyle(
-                          fontSize: 16,
+                          fontSize: 18,
                           fontWeight: FontWeight.bold,
-                          color: Colors.black87,
+                          color: Color(0xFF6286B8),
                         ),
                       ),
                     ],
@@ -854,21 +858,25 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Row(
+              Row(
                 children: [
-                  Text('🔥', style: TextStyle(fontSize: 18)),
-                  SizedBox(width: 6),
-                  Text(
+                  Image.asset(
+                    'assets/images/firewatch.png',
+                    width: 35,
+                    height: 35,
+                  ),
+                  const SizedBox(width: 6),
+                  const Text(
                     '오늘의 집중 현황',
                     style: TextStyle(
-                      fontSize: 16,
+                      fontSize: 18,
                       fontWeight: FontWeight.bold,
-                      color: Colors.black87,
+                      color: Color(0xFF6286B8),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               if (sessions.isEmpty)
                 const Center(
                   child: Padding(
@@ -878,41 +886,54 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 )
               else
-                GridView.count(
-                  crossAxisCount: 2,
-                  crossAxisSpacing: 10,
-                  mainAxisSpacing: 10,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  childAspectRatio: 1.5,
+                Column(
                   children: [
-                    _StatCard(
-                      label: '집중 시간',
-                      value: focusValue,
-                      unit: focusUnit,
-                      emoji: '⏱️',
-                      bgColor: const Color(0xFFDEEBFF),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _StatCard(
+                            label: '집중 시간',
+                            value: focusValue,
+                            unit: focusUnit,
+                            bgColor: const Color(0xFFDEEBFF),
+                            accentColor: const Color(0xFF0069FF),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _StatCard(
+                            label: '집중률',
+                            value: focusRate,
+                            unit: focusRate == '-' ? '' : '%',
+                            bgColor: const Color(0xFFDEEBFF),
+                            accentColor: const Color(0xFF0069FF),
+                          ),
+                        ),
+                      ],
                     ),
-                    _StatCard(
-                      label: '집중률',
-                      value: focusRate,
-                      unit: focusRate == '-' ? '' : '%',
-                      emoji: '👀',
-                      bgColor: const Color(0xFFDEEBFF),
-                    ),
-                    _StatCard(
-                      label: '졸음 감지',
-                      value: drowsyCount.toString(),
-                      unit: '회',
-                      emoji: '😴',
-                      bgColor: const Color(0xFFFFF0D6),
-                    ),
-                    _StatCard(
-                      label: '스마트폰 사용',
-                      value: phoneCount.toString(),
-                      unit: '회',
-                      emoji: '📱',
-                      bgColor: const Color(0xFFFFE0E0),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _StatCard(
+                            label: '졸음 감지',
+                            value: drowsyCount.toString(),
+                            unit: '회',
+                            bgColor: const Color(0xFFFFF0D6),
+                            accentColor: const Color(0xFFBF5A00),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _StatCard(
+                            label: '스마트폰 사용',
+                            value: phoneCount.toString(),
+                            unit: '회',
+                            bgColor: const Color(0xFFFFE0E0),
+                            accentColor: const Color(0xFFB71D28),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -928,58 +949,68 @@ class _StatCard extends StatelessWidget {
   final String label;
   final String value;
   final String unit;
-  final String emoji;
   final Color bgColor;
+  final Color accentColor;
 
   const _StatCard({
     required this.label,
     required this.value,
     required this.unit,
-    required this.emoji,
     required this.bgColor,
+    required this.accentColor,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: bgColor,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE0E0E0)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label,
-            style: const TextStyle(fontSize: 12, color: Colors.black54),
-          ),
-          const Spacer(),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              RichText(
-                text: TextSpan(
-                  children: [
-                    TextSpan(
-                      text: value,
-                      style: const TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black87,
-                      ),
-                    ),
-                    TextSpan(
-                      text: unit,
-                      style: const TextStyle(
-                          fontSize: 13, color: Colors.black54),
-                    ),
-                  ],
-                ),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(11)),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: accentColor,
               ),
-              Text(emoji, style: const TextStyle(fontSize: 24)),
-            ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+            child: RichText(
+              text: TextSpan(
+                children: [
+                  TextSpan(
+                    text: value,
+                    style: TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      color: accentColor,
+                      height: 1.0,
+                    ),
+                  ),
+                  TextSpan(
+                    text: unit,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      color: Color(0xFF8E8E8E),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ],
       ),

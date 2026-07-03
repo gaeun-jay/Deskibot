@@ -91,11 +91,8 @@ class _BottomBarScreenState extends State<BottomBarScreen> {
               color: const Color(0xFF4A90D9),
               colorBlendMode: BlendMode.srcIn,
             ),
-<<<<<<< HEAD
             label: '데일리로그',
-=======
-            label: 'Daily Log',
->>>>>>> origin/app-develop
+
           ),
           BottomNavigationBarItem(
             icon: Image.asset(
