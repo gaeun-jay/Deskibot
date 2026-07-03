@@ -1,7 +1,9 @@
 import 'dart:math' show sqrt;
 import 'package:flutter/material.dart';
+import 'package:glassmorphism/glassmorphism.dart';
 import 'package:deskibot/models/cumulative_stats_model.dart';
 import 'package:deskibot/services/cumulative_stats_service.dart';
+import 'package:deskibot/theme/app_styles.dart';
 
 class CumulativeAnalysisScreen extends StatefulWidget {
   const CumulativeAnalysisScreen({super.key});
@@ -87,54 +89,48 @@ class _CumulativeAnalysisScreenState extends State<CumulativeAnalysisScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F5FA),
-      body: Column(
-        children: [
-          _buildHeader(),
-          Expanded(
-                child: _loading
-                    ? const Center(child: CircularProgressIndicator(color: Color(0xFF0069FF)))
-                    : SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
-                  child: Column(
-                    children: [
-                      _buildPeriodInfo(),
-                      const SizedBox(height: 10),
-                      _buildAISummary(),
-                      const SizedBox(height: 12),
-                      _buildSummaryCards(),
-                      const SizedBox(height: 12),
-                      _buildFocusBarChart(),
-                      const SizedBox(height: 12),
-                      _buildDistractionLineChart(),
-                      const SizedBox(height: 12),
-                      _buildTimeHeatmap(),
-                      const SizedBox(height: 12),
-                      _buildInsights(),
-                      const SizedBox(height: 12),
-                      _buildAIRoutine(),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
+      body: Container(
+        decoration: const BoxDecoration(gradient: kAppBackgroundGradient),
+        child: Column(
+          children: [
+            _buildHeader(),
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator(color: Color(0xFF0069FF)))
+                  : SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 80),
+                      child: Column(
+                        children: [
+                          _buildPeriodInfo(),
+                          const SizedBox(height: 10),
+                          _buildAISummary(),
+                          const SizedBox(height: 12),
+                          _buildSummaryCards(),
+                          const SizedBox(height: 12),
+                          _buildFocusBarChart(),
+                          const SizedBox(height: 12),
+                          _buildDistractionLineChart(),
+                          const SizedBox(height: 12),
+                          _buildTimeHeatmap(),
+                          const SizedBox(height: 12),
+                          _buildInsights(),
+                          const SizedBox(height: 12),
+                          _buildAIRoutine(),
+                        ],
+                      ),
+                    ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
   Widget _buildHeader() {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xCC0069FF), Color(0x000069FF)],
-        ),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+    return SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -143,39 +139,23 @@ class _CumulativeAnalysisScreenState extends State<CumulativeAnalysisScreen> {
               children: [
                 Image.asset(
                   'assets/images/cumulative_character.png',
-                  width: 120,
-                  height: 120,
-                  errorBuilder: (_, _, _) =>
-                      const Icon(Icons.bar_chart, size: 120, color: Colors.white),
+                  width: kHeaderCharacterSize,
+                  height: kHeaderCharacterSize,
+                  errorBuilder: (_, _, _) => const Icon(
+                    Icons.bar_chart,
+                    size: kHeaderCharacterSize,
+                    color: Colors.white,
+                  ),
                 ),
                 const SizedBox(width: 14),
                 const Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      '누적 분석',
-                      style: TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                        shadows: [
-                          Shadow(
-                            offset: Offset(1, 1),
-                            blurRadius: 1,
-                            color: Color(0x80000000),
-                          ),
-                        ],
-                      ),
-                    ),
+                    Text('누적 분석', style: kHeaderTitleStyle),
                     SizedBox(height: 6),
                     Text(
                       '나는 어떤 패턴을 가진 사람인지\n확인해보세요.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.white,
-                        height: 1.5,
-                        fontWeight: FontWeight.w500,
-                      ),
+                      style: kHeaderSubtitleStyle,
                     ),
                   ],
                 ),
@@ -186,75 +166,67 @@ class _CumulativeAnalysisScreenState extends State<CumulativeAnalysisScreen> {
           ],
         ),
       ),
-    ),
     );
   }
 
   Widget _buildPeriodSelector() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final tabWidth = constraints.maxWidth / _periods.length;
-        return Container(
-          height: 40,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.08),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Stack(
-            children: [
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeInOut,
-                left: _selectedPeriod * tabWidth + 2,
-                top: 2,
-                bottom: 2,
-                width: tabWidth - 4,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0069FF),
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                ),
-              ),
-              Row(
-                children: List.generate(_periods.length, (i) {
-                  final selected = _selectedPeriod == i;
-                  return GestureDetector(
-                    onTap: () {
-                      setState(() => _selectedPeriod = i);
-                      _loadStats();
-                    },
-                    child: SizedBox(
-                      width: tabWidth,
-                      height: 40,
-                      child: Center(
-                        child: AnimatedDefaultTextStyle(
-                          duration: const Duration(milliseconds: 220),
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: selected
-                                ? Colors.white
-                                : const Color(0xFF8E9BB5),
-                          ),
-                          child: Text(_periods[i]),
-                        ),
-                      ),
-                    ),
-                  );
-                }),
-              ),
-            ],
-          ),
-        );
+    return SizedBox(
+      height: 44,
+      child: Row(
+        children: List.generate(_periods.length, (i) {
+          return Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(right: i == _periods.length - 1 ? 0 : 6),
+              child: _buildPeriodTabItem(index: i, label: _periods[i]),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
+  Widget _buildPeriodTabItem({required int index, required String label}) {
+    final isSelected = _selectedPeriod == index;
+    return GestureDetector(
+      onTap: () {
+        setState(() => _selectedPeriod = index);
+        _loadStats();
       },
+      child: GlassmorphicContainer(
+        width: double.infinity,
+        height: double.infinity,
+        borderRadius: 50,
+        blur: 15,
+        border: 1.5,
+        linearGradient: LinearGradient(
+          colors: isSelected
+              ? const [
+                  Color.fromRGBO(0, 115, 255, 0.3),
+                  Color.fromRGBO(0, 115, 255, 0.3),
+                ]
+              : const [
+                  Color.fromRGBO(167, 167, 167, 0.3),
+                  Color.fromRGBO(167, 167, 167, 0.3),
+                ],
+        ),
+        borderGradient: LinearGradient(
+          colors: [
+            Colors.white.withValues(alpha: 0.4),
+            Colors.white.withValues(alpha: 0.6),
+          ],
+        ),
+        child: Center(
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Colors.white,
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -726,14 +698,7 @@ class _CumulativeAnalysisScreenState extends State<CumulativeAnalysisScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'AI 루틴 제안',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF6286B8),
-                      ),
-                    ),
+                    const Text('AI 루틴 제안', style: kCardTitleStyle),
                     const SizedBox(height: 3),
                     const Text(
                       'AI가 제안한 루틴을 타임테이블에 추가해 보세요.',
@@ -825,14 +790,7 @@ class _CumulativeAnalysisScreenState extends State<CumulativeAnalysisScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF6286B8),
-                ),
-              ),
+              Text(title, style: kCardTitleStyle),
               ?trailing,
             ],
           ),

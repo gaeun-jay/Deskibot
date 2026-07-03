@@ -7,6 +7,7 @@ import 'package:deskibot/services/focus_session_service.dart';
 import 'package:deskibot/services/todo_service.dart';
 import 'package:deskibot/services/user_service.dart';
 import 'package:deskibot/screens/auth/login_screen.dart';
+import 'package:deskibot/theme/app_styles.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -273,169 +274,142 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F5FA),
-      body: Column(
-        children: [
-          _buildHeader(),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-              child: Column(
-                children: [
-                  if (_showForm) ...[
-                    _buildForm(),
+      body: Container(
+        decoration: const BoxDecoration(gradient: kAppBackgroundGradient),
+        child: Column(
+          children: [
+            _buildHeader(),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                child: Column(
+                  children: [
+                    if (_showForm) ...[
+                      _buildForm(),
+                      const SizedBox(height: 12),
+                    ],
+                    _buildTodoList(),
                     const SizedBox(height: 12),
+                    _buildFocusStats(),
+                    const SizedBox(height: 80),
                   ],
-                  _buildTodoList(),
-                  const SizedBox(height: 12),
-                  _buildFocusStats(),
-                  const SizedBox(height: 80),
-                ],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildHeader() {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Color(0xCC0069FF),
-            Color(0x000069FF),
-          ],
-        ),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 30,
-                    height: 30,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.25),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: Image.asset(
-                      'assets/images/Launcher_icon.png',
-                      fit: BoxFit.cover,
-                    ),
+    return SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.25),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'Deskibot',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                    ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Image.asset(
+                    'assets/images/Launcher_icon.png',
+                    fit: BoxFit.cover,
                   ),
-                  const Spacer(),
-                  GestureDetector(
-                    onTap: _onLogout,
-                    child: const Icon(
-                      Icons.logout,
-                      color: Colors.white,
-                      size: 24,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '일정 관리',
-                        style: TextStyle(
-                          fontSize: 28,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                          shadows: [
-                            Shadow(
-                              offset: Offset(1, 1),
-                              blurRadius: 1,
-                              color: Color(0x80000000),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '오늘의 할일을 정리하고 하루를 시작하세요.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white.withValues(alpha: 1),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _formatTodayHeader(),
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white.withValues(alpha: 0.9),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const Spacer(),
-                  Image.asset(
-                    'assets/images/Home_character.png',
-                    width: 90,
-                    errorBuilder: (_, _, _) =>
-                        const Icon(Icons.smart_toy, size: 80, color: Colors.white),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () =>
-                      _showForm ? _closeForm() : setState(() => _showForm = true),
-                  icon: Icon(
-                    _showForm ? Icons.close : Icons.add,
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'Deskibot',
+                  style: TextStyle(
                     color: Colors.white,
-                    size: 20,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
                   ),
-                  label: Text(
-                    _showForm ? '닫기' : '할일 추가하기',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                    ),
+                ),
+                const Spacer(),
+                GestureDetector(
+                  onTap: _onLogout,
+                  child: const Icon(
+                    Icons.logout,
+                    color: Colors.white,
+                    size: 24,
                   ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0x4D0073FF),
-                    elevation: 0,
-                    shadowColor: Colors.transparent,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(30),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('일정 관리', style: kHeaderTitleStyle),
+                    const SizedBox(height: 2),
+                    const Text(
+                      '오늘의 할일을 정리하고 하루를 시작하세요.',
+                      style: kHeaderSubtitleStyle,
                     ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _formatTodayHeader(),
+                      style: kHeaderSubtitleStyle.copyWith(
+                        color: Colors.white.withValues(alpha: 0.9),
+                      ),
+                    ),
+                  ],
+                ),
+                const Spacer(),
+                Image.asset(
+                  'assets/images/Home_character.png',
+                  width: kHeaderCharacterSize,
+                  errorBuilder: (_, _, _) => const Icon(
+                    Icons.smart_toy,
+                    size: kHeaderCharacterSize,
+                    color: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () =>
+                    _showForm ? _closeForm() : setState(() => _showForm = true),
+                icon: Icon(
+                  _showForm ? Icons.close : Icons.add,
+                  color: Colors.white,
+                  size: 20,
+                ),
+                label: Text(
+                  _showForm ? '닫기' : '할일 추가하기',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0x4D0073FF),
+                  elevation: 0,
+                  shadowColor: Colors.transparent,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(30),
                   ),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -696,18 +670,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       Image.asset(
                         'assets/images/todoboard.png',
-                        width: 35,
-                        height: 35,
+                        width: 24,
+                        height: 24,
                       ),
                       const SizedBox(width: 6),
-                      const Text(
-                        '오늘 할일',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF6286B8),
-                        ),
-                      ),
+                      const Text('오늘 할일', style: kCardTitleStyle),
                     ],
                   ),
                   Container(
@@ -862,18 +829,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   Image.asset(
                     'assets/images/firewatch.png',
-                    width: 35,
-                    height: 35,
+                    width: 24,
+                    height: 24,
                   ),
                   const SizedBox(width: 6),
-                  const Text(
-                    '오늘의 집중 현황',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF6286B8),
-                    ),
-                  ),
+                  const Text('오늘의 집중 현황', style: kCardTitleStyle),
                 ],
               ),
               const SizedBox(height: 10),

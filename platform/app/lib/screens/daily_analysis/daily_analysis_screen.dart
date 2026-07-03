@@ -7,6 +7,7 @@ import 'package:deskibot/services/todo_service.dart';
 import 'package:deskibot/services/focus_session_service.dart';
 import 'package:deskibot/models/focus_session_model.dart';
 import 'package:deskibot/models/todo_model.dart';
+import 'package:deskibot/theme/app_styles.dart';
 
 import 'dart:convert';
 import 'package:http/http.dart' as http;
@@ -175,39 +176,31 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
       body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFF5097FF),
-              Color(0xFF7DB2FF),
-              Color(0xFFA5CAFF),
-              Color(0xFFD2E4FF),
-              Color(0xFFF5F9FF),
-              Color(0xFFFFFFFF),
-            ],
-            stops: [0.0, 0.2, 0.35, 0.5, 0.8, 1.0],
-          ),
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            children: [
-              _buildHeader(),
-              if (_selectedTab == 0) ...[
-                _buildScoreCard(_focusRate, _totalScore),
-                _buildKeywordSummary(_focusRate),
-                _buildTodoCard(),
-                _buildTimeSlotCard(),
-                _buildDisturbanceCard()
-              ] else ...[
-                _buildInfoBanner(),
-                _buildDailyJournalCard(),
-              ],
-            ],
-          ),
+        decoration: const BoxDecoration(gradient: kAppBackgroundGradient),
+        child: Column(
+          children: [
+            _buildHeader(),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.only(bottom: 24),
+                child: Column(
+                  children: [
+                    if (_selectedTab == 0) ...[
+                      _buildScoreCard(_focusRate, _totalScore),
+                      _buildKeywordSummary(_focusRate),
+                      _buildTodoCard(),
+                      _buildTimeSlotCard(),
+                      _buildDisturbanceCard()
+                    ] else ...[
+                      _buildInfoBanner(),
+                      _buildDailyJournalCard(),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -219,35 +212,14 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
       child: SafeArea(
         bottom: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
           child: Column(
             children: [
-              const SizedBox(height: 40),
+              const SizedBox(height: 24),
               _buildCharacter(),
-              const Text(
-                '일간 분석',
-                style: TextStyle(
-                  fontSize: 30,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                  letterSpacing: 1.2,
-                  shadows: [
-                    Shadow(
-                      color: Color(0x80000000),
-                      blurRadius: 4,
-                      offset: Offset(1, 1),
-                    ),
-                  ],
-                ),
-              ),
-              Text(
-                _getFormattedDate(),
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: Colors.white,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
+              const Text('일간 분석', style: kHeaderTitleStyle),
+              const SizedBox(height: 4),
+              Text(_getFormattedDate(), style: kHeaderSubtitleStyle),
               const SizedBox(height: 16),
               _buildTabButtons(),
             ],
@@ -261,8 +233,8 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
   Widget _buildCharacter() {
     return Image.asset(
       'assets/images/daily_character.png',
-      width: 130,
-      height: 130,
+      width: kHeaderCharacterSize,
+      height: kHeaderCharacterSize,
     );
   }
 
@@ -360,14 +332,7 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            '오늘의 종합 점수',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF6286B8),
-            ),
-          ),
+          const Text('오늘의 종합 점수', style: kCardTitleStyle),
           const SizedBox(height: 16),
           Row(
             children: [
@@ -477,14 +442,7 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            '키워드별 요약',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF6286B8),
-            ),
-          ),
+          const Text('키워드별 요약', style: kCardTitleStyle),
           const SizedBox(height: 12),
           Row(
             children: [
@@ -664,14 +622,7 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            '시간대별 집중도',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF6286B8),
-            ),
-          ),
+          const Text('시간대별 집중도', style: kCardTitleStyle),
           const SizedBox(height: 12),
           ...slots.map((slot) {
             final rate = _timeSlotRates[slot] ?? 0;
@@ -731,14 +682,7 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            '방해 요소 감지',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF6286B8),
-            ),
-          ),
+          const Text('방해 요소 감지', style: kCardTitleStyle),
           const SizedBox(height: 12),
           _buildDisturbanceItem(
             iconPath: 'assets/images/drowsy_icon.png',

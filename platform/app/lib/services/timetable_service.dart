@@ -1,8 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
-import 'package:deskibot/models/todo_item_model.dart';
+import 'package:deskibot/models/todo_model.dart';
 import 'package:deskibot/models/focus_block_model.dart';
+import 'package:deskibot/models/user_model.dart';
 
 class TimetableService {
   final _db = FirebaseFirestore.instance;
@@ -21,7 +22,7 @@ class TimetableService {
 
   // ── Todo CRUD ─────────────────────────────────────────────────
 
-  Future<List<TodoItem>> getTodosForDate(String date) async {
+  Future<List<TodoModel>> getTodosForDate(String date) async {
     final uid = await _getUid();
     if (uid == null) return [];
 
@@ -30,11 +31,11 @@ class TimetableService {
         .get();
 
     return snapshot.docs
-        .map((doc) => TodoItem.fromMap(doc.id, doc.data() as Map<String, dynamic>))
+        .map((doc) => TodoModel.fromMap(doc.id, doc.data() as Map<String, dynamic>))
         .toList();
   }
 
-  Future<void> addTodo(TodoItem todo) async {
+  Future<void> addTodo(TodoModel todo) async {
     final uid = await _getUid();
     if (uid == null) return;
 
@@ -88,7 +89,7 @@ class TimetableService {
         .toList();
   }
 
-  // ── Todo 시간/색상 수정 ───────────────────────────────────────
+  // ── Todo 시간 수정 ────────────────────────────────────────────
 
   Future<void> updateTodoTime(
     String todoId,
@@ -105,13 +106,6 @@ class TimetableService {
     });
   }
 
-  Future<void> updateTodoColor(String todoId, String color) async {
-    final uid = await _getUid();
-    if (uid == null) return;
-
-    await _todosRef(uid).doc(todoId).update({'color': color});
-  }
-
   // ── 집중 세션 제목 수정 ───────────────────────────────────────
 
   Future<void> updateFocusLabel(String sessionId, String label) async {
@@ -123,7 +117,7 @@ class TimetableService {
 
   // ── 카테고리 조회 ─────────────────────────────────────────────
 
-  Future<Map<String, String>> getCategories() async {
+  Future<Map<String, Category>> getCategories() async {
     final uid = await _getUid();
     if (uid == null) return {};
 
@@ -133,7 +127,7 @@ class TimetableService {
     final cats = ((doc.data()!['settings'] as Map<String, dynamic>?)?['categories'] as List<dynamic>?) ?? [];
     return {
       for (final c in cats)
-        (c['id'] as String): (c['color'] as String),
+        (c['id'] as String): Category.fromMap(Map<String, dynamic>.from(c as Map)),
     };
   }
 

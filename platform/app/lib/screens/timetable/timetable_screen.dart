@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:deskibot/models/todo_item_model.dart';
+import 'package:deskibot/models/todo_model.dart';
 import 'package:deskibot/models/focus_block_model.dart';
+import 'package:deskibot/models/user_model.dart';
 import 'package:deskibot/services/timetable_service.dart';
+import 'package:deskibot/theme/app_styles.dart';
 
 // ── 색상 ─────────────────────────────────────────────────────────────
-const _kBlue1 = Color(0xFF4491FF);
-const _kBlue2 = Color(0xFF68A6FF);
 const _kMain  = Color(0xFF2881FF);
+// 카테고리에 매칭되는 색이 없을 때만 사용하는 기본값
+const _kDefaultTodoColor = '#4A90D9';
 
 
 Color _hexColor(String hex) =>
@@ -33,9 +35,9 @@ class _TimetableScreenState extends State<TimetableScreen> {
   DateTime _selectedDate = DateTime.now();
   bool _showFocus = false;
 
-  List<TodoItem> _todos = [];
+  List<TodoModel> _todos = [];
   List<FocusBlock> _focusBlocks = [];
-  Map<String, String> _categoryColors = {};
+  Map<String, Category> _categories = {};
   bool _isLoading = true;
   bool _wasVisible = false;
 
@@ -89,24 +91,22 @@ class _TimetableScreenState extends State<TimetableScreen> {
     ]);
     if (!mounted) return;
     setState(() {
-      _todos = results[0] as List<TodoItem>;
+      _todos = results[0] as List<TodoModel>;
       _focusBlocks = results[1] as List<FocusBlock>;
-      _categoryColors = results[2] as Map<String, String>;
+      _categories = results[2] as Map<String, Category>;
       _isLoading = false;
     });
   }
 
-  List<TodoItem> get _unscheduled => _todos.where((t) => !t.hasTime).toList();
-  List<TodoItem> get _scheduled   => _todos.where((t) => t.hasTime).toList();
+  List<TodoModel> get _unscheduled => _todos.where((t) => !t.hasTime).toList();
+  List<TodoModel> get _scheduled   => _todos.where((t) => t.hasTime).toList();
 
   // ── 블록 레이아웃 계산 ──────────────────────────────────────────────
   List<_BlockLayout> _buildLayouts() {
     final layouts = <_BlockLayout>[];
 
     for (final todo in _scheduled) {
-      final color = (todo.categoryId != null && _categoryColors.containsKey(todo.categoryId))
-          ? _categoryColors[todo.categoryId]!
-          : todo.color;
+      final color = _categories[todo.categoryId]?.color ?? _kDefaultTodoColor;
       layouts.add(_BlockLayout(
         id: todo.id,
         title: todo.content,
@@ -167,7 +167,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
   @override
   Widget build(BuildContext context) {
     final statusBarH = MediaQuery.of(context).padding.top;
-    final headerH = statusBarH + 170.0;
+    final headerH = statusBarH + 150.0;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF0F4FF),
@@ -176,61 +176,35 @@ class _TimetableScreenState extends State<TimetableScreen> {
           // ── 1) 그라디언트 배경 ───────────────────────────────
           Positioned.fill(
             child: Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [_kBlue1, _kBlue2, Color(0xFFD6E4FF), Color(0xFFF0F4FF)],
-                  stops: [0.0, 0.12, 0.28, 1.0],
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                ),
-              ),
+              decoration: const BoxDecoration(gradient: kAppBackgroundGradient),
             ),
           ),
 
           // ── 2) 캐릭터 (흰 카드 뒤, 왼쪽) ───────────────────
           Positioned(
-            top: statusBarH - 10,
-            left: -5,
+            top: statusBarH + 16,
+            left: 10,
             child: Image.asset(
               'assets/images/character_timetable.png',
-              width: 160,
-              height: 178,
+              width: 143,
+              height: 143,
               fit: BoxFit.contain,
             ),
           ),
 
           // ── 3) 헤더 텍스트 (오른쪽) ─────────────────────────
           Positioned(
-            top: statusBarH + 44,
+            top: statusBarH + 70,
             left: 155,
             right: 16,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: const [
-                Text(
-                  'Daily Log',
-                  style: TextStyle(
-                    fontSize: 30,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
-                    shadows: [
-                      Shadow(
-                        offset: Offset(1, 1),
-                        blurRadius: 1,
-                        color: Color(0x80000000),
-                      ),
-                    ],
-                  ),
-                ),
+                Text('Daily Log', style: kHeaderTitleStyle),
                 SizedBox(height: 6),
                 Text(
                   '하루 일정을 시간대별로 확인하세요.',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                    height: 1.4,
-                  ),
+                  style: kHeaderSubtitleStyle,
                 ),
               ],
             ),
@@ -244,20 +218,11 @@ class _TimetableScreenState extends State<TimetableScreen> {
             bottom: 0,
             child: Column(
               children: [
-                // 토글 (타임테이블 위 오른쪽)
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: _FocusToggle(
-                    showFocus: _showFocus,
-                    onChanged: (v) => setState(() => _showFocus = v),
-                  ),
-                ),
-
-                // 시간 미정 섹션 (흰 카드 위)
+                // 시간 미정 섹션 (하루 일정)
                 if (_unscheduled.isNotEmpty) ...[
                   _UnscheduledSection(
                     items: _unscheduled,
-                    categoryColors: _categoryColors,
+                    categories: _categories,
                     onToggle: (todo) async {
                       await _service.toggleDone(todo.id, !todo.isDone);
                       _loadData();
@@ -270,16 +235,27 @@ class _TimetableScreenState extends State<TimetableScreen> {
                   ),
                 ],
 
+                // 토글 (타임테이블 위 오른쪽)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: _FocusToggle(
+                    showFocus: _showFocus,
+                    onChanged: (v) => setState(() => _showFocus = v),
+                  ),
+                ),
+
                 // 흰 카드 (타임 그리드)
                 Expanded(
                   child: Container(
-                    decoration: const BoxDecoration(
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                    decoration: BoxDecoration(
                       color: Colors.white,
-                      borderRadius: BorderRadius.only(
+                      borderRadius: const BorderRadius.only(
                         topLeft: Radius.circular(24),
                         topRight: Radius.circular(24),
                       ),
-                      boxShadow: [
+                      border: Border.all(color: const Color(0xFFD1D1D1)),
+                      boxShadow: const [
                         BoxShadow(
                           color: Color(0x18000000),
                           blurRadius: 12,
@@ -461,7 +437,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
     );
   }
 
-  void _showAssignTimeSheet(TodoItem todo) {
+  void _showAssignTimeSheet(TodoModel todo) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -482,19 +458,8 @@ class _FocusToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.85),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -525,15 +490,15 @@ class _FocusToggle extends StatelessWidget {
 
 // ── 시간 미정 섹션 ──────────────────────────────────────────────────
 class _UnscheduledSection extends StatelessWidget {
-  final List<TodoItem> items;
-  final Map<String, String> categoryColors;
-  final ValueChanged<TodoItem> onToggle;
-  final ValueChanged<TodoItem> onDelete;
-  final ValueChanged<TodoItem> onAssignTime;
+  final List<TodoModel> items;
+  final Map<String, Category> categories;
+  final ValueChanged<TodoModel> onToggle;
+  final ValueChanged<TodoModel> onDelete;
+  final ValueChanged<TodoModel> onAssignTime;
 
   const _UnscheduledSection({
     required this.items,
-    required this.categoryColors,
+    required this.categories,
     required this.onToggle,
     required this.onDelete,
     required this.onAssignTime,
@@ -542,11 +507,11 @@ class _UnscheduledSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      margin: const EdgeInsets.fromLTRB(4, 4, 4, 8),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE0E8FF)),
+        border: Border.all(color: const Color(0xFFD1D1D1)),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.06),
@@ -564,6 +529,9 @@ class _UnscheduledSection extends StatelessWidget {
             decoration: const BoxDecoration(
               color: Color(0xFFE9F2FF),
               borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+              border: Border(
+                bottom: BorderSide(color: Color(0xFFD1D1D1)),
+              ),
             ),
             child: const Text(
               '하루 일정',
@@ -587,9 +555,8 @@ class _UnscheduledSection extends StatelessWidget {
                       color: Color(0xFFF0F0F0)),
                 _UnscheduledTile(
                   todo: todo,
-                  chipColor: categoryColors.containsKey(todo.categoryId)
-                      ? _hexColor(categoryColors[todo.categoryId]!)
-                      : _hexColor(todo.color),
+                  categoryName: categories[todo.categoryId]?.name,
+                  chipColor: _hexColor(categories[todo.categoryId]?.color ?? _kDefaultTodoColor),
                   onToggle: () => onToggle(todo),
                   onDelete: () => onDelete(todo),
                   onAssignTime: () => onAssignTime(todo),
@@ -604,7 +571,8 @@ class _UnscheduledSection extends StatelessWidget {
 }
 
 class _UnscheduledTile extends StatelessWidget {
-  final TodoItem todo;
+  final TodoModel todo;
+  final String? categoryName;
   final Color chipColor;
   final VoidCallback onToggle;
   final VoidCallback onDelete;
@@ -612,6 +580,7 @@ class _UnscheduledTile extends StatelessWidget {
 
   const _UnscheduledTile({
     required this.todo,
+    required this.categoryName,
     required this.chipColor,
     required this.onToggle,
     required this.onDelete,
@@ -641,7 +610,7 @@ class _UnscheduledTile extends StatelessWidget {
                 ),
               ),
             ),
-            if (todo.categoryId != null)
+            if (categoryName != null)
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -650,7 +619,7 @@ class _UnscheduledTile extends StatelessWidget {
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
-                  todo.categoryId!,
+                  categoryName!,
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
@@ -897,7 +866,7 @@ class _TimePickerButton extends StatelessWidget {
 }
 
 class _AssignTimeSheet extends StatefulWidget {
-  final TodoItem todo;
+  final TodoModel todo;
   final TimetableService service;
   final VoidCallback onSaved;
 

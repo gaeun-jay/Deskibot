@@ -10,9 +10,8 @@ import '../../models/timer_state.dart';
 import '../../services/auth_service.dart';
 import '../../services/timer_service.dart';
 import '../../services/timer_provider.dart';
+import '../../theme/app_styles.dart';
 
-const _kBlue1 = Color(0xFF4491FF);
-const _kBlue2 = Color(0xFF68A6FF);
 const _kMain = Color(0xFF2881FF);
 
 class FocusScreen extends StatefulWidget {
@@ -123,7 +122,7 @@ class _FocusScreenState extends State<FocusScreen>
 
     final statusBarH = MediaQuery.of(context).padding.top;
     // 그라디언트 헤더 높이 (상태바 + 텍스트 영역)
-    final headerH = statusBarH + 150.0;
+    final headerH = statusBarH + 186.0;
 
     return ChangeNotifierProvider<TimerProvider>.value(
       value: _timerProvider!,
@@ -134,54 +133,23 @@ class _FocusScreenState extends State<FocusScreen>
             // ── 1) 그라디언트 배경 ────────────────────────────
             Positioned.fill(
               child: Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      _kBlue1,
-                      _kBlue2,
-                      Color(0xFFD6E4FF),
-                      Color(0xFFF5F6FA),
-                    ],
-                    stops: [0.0, 0.12, 0.28, 1.0],
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                  ),
-                ),
+                decoration: const BoxDecoration(gradient: kAppBackgroundGradient),
               ),
             ),
 
             // ── 2) 헤더 텍스트 ───────────────────────────────
             Positioned(
-              top: statusBarH + 20,
+              top: statusBarH + 56,
               left: 20,
               right: 160,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: const [
-                  Text(
-                    '집중 모드',
-                    style: TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
-                      shadows: [
-                        Shadow(
-                          offset: Offset(1, 1),
-                          blurRadius: 1,
-                          color: Color(0x80000000),
-                        ),
-                      ],
-                    ),
-                  ),
+                  Text('집중 모드', style: kHeaderTitleStyle),
                   SizedBox(height: 4),
                   Text(
                     '뽀모도로와 스톱워치를 사용하여 집중 세션을 시작하세요.',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                      height: 1.4,
-                    ),
+                    style: kHeaderSubtitleStyle,
                   ),
                 ],
               ),
@@ -189,12 +157,12 @@ class _FocusScreenState extends State<FocusScreen>
 
             // ── 3) 캐릭터 (흰 카드 뒤에 렌더링) ─────────────
             Positioned(
-              top: statusBarH - 20,
+              top: statusBarH + 16,
               right: -10,
               child: Image.asset(
                 'assets/images/character_focus.png',
-                width: 190,
-                height: 210,
+                width: 180,
+                height: 180,
                 fit: BoxFit.contain,
               ),
             ),
@@ -606,6 +574,7 @@ class _TodaySessionsCard extends StatelessWidget {
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 305),
               child: ListView.builder(
+                padding: EdgeInsets.zero,
                 shrinkWrap: true,
                 physics: sessions.length > 5
                     ? const AlwaysScrollableScrollPhysics()
@@ -872,7 +841,7 @@ class _PillBtn extends StatelessWidget {
   Widget build(BuildContext context) {
     final fgColor = textColor ?? (filled ? Colors.white : _kMain);
     return SizedBox(
-      width: double.infinity,
+      width: 268,
       height: 56,
       child: filled
           ? ElevatedButton(
@@ -888,7 +857,7 @@ class _PillBtn extends StatelessWidget {
               child: Text(
                 label,
                 style: TextStyle(
-                  fontSize: 18,
+                  fontSize: 17,
                   fontWeight: FontWeight.w600,
                   color: fgColor,
                 ),
@@ -906,7 +875,7 @@ class _PillBtn extends StatelessWidget {
               child: Text(
                 label,
                 style: TextStyle(
-                  fontSize: 18,
+                  fontSize: 17,
                   fontWeight: FontWeight.w600,
                   color: fgColor,
                 ),
