@@ -51,4 +51,8 @@ class TodoModel {
         'notify_before': notifyBefore,
         'is_done': isDone,
       };
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> origin/app-develop
