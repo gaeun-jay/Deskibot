@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:deskibot/services/auth_service.dart';
 import 'package:deskibot/screens/auth/signup_screen.dart';
 import 'package:deskibot/screens/bottom_bar/bottom_bar_screen.dart';
+
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -67,96 +68,86 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      body: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 상단 헤더 이미지 (물결 + 캐릭터)
-            Image.asset(
-              'assets/images/Top_background.png',
-              width: double.infinity,
-              fit: BoxFit.fitWidth,
+      body: Stack(
+        children: [
+          Container(
+            width: double.infinity,
+            height: double.infinity,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0xCC0069FF),
+                  Color(0x000069FF),
+                ],
+              ),
             ),
-
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24.0),
+          ),
+          SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 28.0),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  const SizedBox(height: 32),
+                  const SizedBox(height: 60),
 
-                  // 로그인 타이틀
+                  Image.asset(
+                    'assets/images/Home_character.png',
+                    width: 160,
+                    height: 160,
+                    errorBuilder: (_, _, _) =>
+                        const Icon(Icons.smart_toy, size: 160, color: Colors.white),
+                  ),
+
+                  const SizedBox(height: 12),
+
                   const Text(
                     '로그인',
                     style: TextStyle(
                       fontSize: 28,
                       fontWeight: FontWeight.bold,
-                      color: Color(0xFF4A90D9),
+                      color: Colors.white,
                     ),
                   ),
-                  const SizedBox(height: 16),
 
-                  // 아이디 입력
-                  TextField(
+                  const SizedBox(height: 32),
+
+                  _buildInputField(
                     controller: _idController,
-                    decoration: InputDecoration(
-                      hintText: '아이디 입력',
-                      prefixIcon: const Icon(Icons.person_outline,
-                          color: Colors.grey),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Color(0xFFDDDDDD)),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Color(0xFFDDDDDD)),
-                      ),
-                    ),
+                    hint: '아이디 입력',
+                    icon: Icons.person_outline,
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 12),
 
-                  // 비밀번호 입력
-                  TextField(
+                  _buildInputField(
                     controller: _passwordController,
-                    obscureText: true,
-                    decoration: InputDecoration(
-                      hintText: '비밀번호 입력',
-                      prefixIcon: const Icon(Icons.lock_outline,
-                          color: Colors.grey),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Color(0xFFDDDDDD)),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: Color(0xFFDDDDDD)),
-                      ),
-                    ),
+                    hint: '비밀번호 입력',
+                    icon: Icons.lock_outline,
+                    obscure: true,
                   ),
-                  const SizedBox(height: 8),
 
-                  // 에러 메시지
-                  if (_errorMessage != null)
+                  if (_errorMessage != null) ...[
+                    const SizedBox(height: 8),
                     Text(
                       _errorMessage!,
-                      style: const TextStyle(
-                        color: Colors.red,
-                        fontSize: 12,
-                      ),
+                      style: const TextStyle(color: Colors.redAccent, fontSize: 12),
                     ),
-                  const SizedBox(height: 16),
+                  ],
 
-                  // 로그인 버튼
+                  const SizedBox(height: 20),
+
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
                       onPressed: _isLoading ? null : _onLogin,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color.fromRGBO(66, 144, 255, 1),
+                        backgroundColor: const Color(0xFF0069FF),
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(30),
                         ),
+                        elevation: 0,
                       ),
                       child: _isLoading
                           ? const SizedBox(
@@ -177,39 +168,44 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                     ),
                   ),
+
                   const SizedBox(height: 16),
 
-                  // 또는 구분선
                   Row(
                     children: [
-                      const Expanded(child: Divider(color: Colors.grey)),
+                      Expanded(
+                        child: Divider(color: Colors.white.withValues(alpha: 0.6)),
+                      ),
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         child: Text(
                           '또는',
-                          style: TextStyle(color: Colors.grey[500]),
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.8),
+                            fontSize: 13,
+                          ),
                         ),
                       ),
-                      const Expanded(child: Divider(color: Colors.grey)),
+                      Expanded(
+                        child: Divider(color: Colors.white.withValues(alpha: 0.6)),
+                      ),
                     ],
                   ),
+
                   const SizedBox(height: 16),
 
-                  // 회원가입 버튼
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
                       onPressed: () => Navigator.push(
                         context,
-                        MaterialPageRoute(
-                          builder: (_) => const SignupScreen(),
-                        ),
+                        MaterialPageRoute(builder: (_) => const SignupScreen()),
                       ),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color.fromRGBO(219, 234, 255, 1),
+                        backgroundColor: const Color(0xFFD6ECFF),
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(30),
                         ),
                         elevation: 0,
                       ),
@@ -217,17 +213,51 @@ class _LoginScreenState extends State<LoginScreen> {
                         '회원가입',
                         style: TextStyle(
                           fontSize: 16,
-                          color: Color.fromRGBO(66, 144, 255, 1),
+                          color: Color(0xFF0069FF),
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                     ),
                   ),
-                  const SizedBox(height: 32),
+
+                  const SizedBox(height: 40),
                 ],
               ),
             ),
-          ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInputField({
+    required TextEditingController controller,
+    required String hint,
+    required IconData icon,
+    bool obscure = false,
+  }) {
+    return TextField(
+      controller: controller,
+      obscureText: obscure,
+      style: const TextStyle(fontSize: 14, color: Colors.black87),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: const TextStyle(color: Colors.grey),
+        prefixIcon: Icon(icon, color: Colors.grey),
+        filled: true,
+        fillColor: Colors.white,
+        contentPadding: const EdgeInsets.symmetric(vertical: 16),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(30),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(30),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(30),
+          borderSide: BorderSide.none,
         ),
       ),
     );

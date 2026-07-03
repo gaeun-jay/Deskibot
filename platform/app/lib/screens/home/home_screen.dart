@@ -177,22 +177,21 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _addTodo() async {
     final content = _contentController.text.trim();
     if (content.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('할일 내용을 입력해주세요')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('할일 내용을 입력해주세요')),
+      );
       return;
     }
     if (_selectedCategoryId == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('카테고리를 선택해주세요')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('카테고리를 선택해주세요')),
+      );
       return;
     }
-    if (!_noTimeSet &&
-        (_selectedStartTime == null || _selectedEndTime == null)) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('시간을 선택해주세요')));
+    if (!_noTimeSet && (_selectedStartTime == null || _selectedEndTime == null)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('시간을 선택해주세요')),
+      );
       return;
     }
 
@@ -201,9 +200,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final deadlineBase = _noTimeSet ? _selectedDeadlineTime : _selectedEndTime;
 
     if (_notifyOption != '없음' && deadlineBase == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('마감 시간을 선택해주세요')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('마감 시간을 선택해주세요')),
+      );
       return;
     }
 
@@ -283,7 +282,10 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
               child: Column(
                 children: [
-                  if (_showForm) ...[_buildForm(), const SizedBox(height: 12)],
+                  if (_showForm) ...[
+                    _buildForm(),
+                    const SizedBox(height: 12),
+                  ],
                   _buildTodoList(),
                   const SizedBox(height: 12),
                   _buildFocusStats(),
@@ -303,7 +305,10 @@ class _HomeScreenState extends State<HomeScreen> {
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Color(0xCC0069FF), Color(0x000069FF)],
+          colors: [
+            Color(0xCC0069FF),
+            Color(0x000069FF),
+          ],
         ),
       ),
       child: SafeArea(
@@ -394,11 +399,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   Image.asset(
                     'assets/images/Home_character.png',
                     width: 90,
-                    errorBuilder: (_, _, _) => const Icon(
-                      Icons.smart_toy,
-                      size: 80,
-                      color: Colors.white,
-                    ),
+                    errorBuilder: (_, _, _) =>
+                        const Icon(Icons.smart_toy, size: 80, color: Colors.white),
                   ),
                 ],
               ),
@@ -406,9 +408,8 @@ class _HomeScreenState extends State<HomeScreen> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
-                  onPressed: () => _showForm
-                      ? _closeForm()
-                      : setState(() => _showForm = true),
+                  onPressed: () =>
+                      _showForm ? _closeForm() : setState(() => _showForm = true),
                   icon: Icon(
                     _showForm ? Icons.close : Icons.add,
                     color: Colors.white,
@@ -476,10 +477,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 borderRadius: BorderRadius.circular(10),
                 borderSide: const BorderSide(color: Color(0xFF0069FF)),
               ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 12,
-              ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             ),
           ),
           const SizedBox(height: 16),
@@ -497,10 +495,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       _selectedCategoryId = selected ? null : cat.id;
                     }),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                       decoration: BoxDecoration(
                         color: selected
                             ? const Color(0xFF0069FF)
@@ -512,9 +507,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         style: TextStyle(
                           color: selected ? Colors.white : Colors.black54,
                           fontSize: 13,
-                          fontWeight: selected
-                              ? FontWeight.w600
-                              : FontWeight.normal,
+                          fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
                         ),
                       ),
                     ),
@@ -539,10 +532,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   }
                 }),
               ),
-              const Text(
-                '시간 설정하지 않기',
-                style: TextStyle(fontSize: 14, color: Colors.black54),
-              ),
+              const Text('시간 설정하지 않기',
+                  style: TextStyle(fontSize: 14, color: Colors.black54)),
             ],
           ),
           if (!_noTimeSet) ...[
@@ -552,11 +543,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
           if (_noTimeSet) ...[
             const SizedBox(height: 4),
-            _timeRow(
-              '마감 시간 (선택)',
-              _timeStr(_selectedDeadlineTime),
-              _pickDeadlineTime,
-            ),
+            _timeRow('마감 시간 (선택)', _timeStr(_selectedDeadlineTime), _pickDeadlineTime),
           ],
           const SizedBox(height: 12),
           _dateRow(),
@@ -594,10 +581,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   child: Text(
                     _editingTodoId == null ? '추가하기' : '수정하기',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                   ),
                 ),
               ),
@@ -611,11 +595,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _formLabel(String text) {
     return Text(
       text,
-      style: const TextStyle(
-        fontSize: 13,
-        color: Colors.black54,
-        fontWeight: FontWeight.w500,
-      ),
+      style: const TextStyle(fontSize: 13, color: Colors.black54, fontWeight: FontWeight.w500),
     );
   }
 
@@ -623,10 +603,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(
-          label,
-          style: const TextStyle(fontSize: 14, color: Colors.black54),
-        ),
+        Text(label, style: const TextStyle(fontSize: 14, color: Colors.black54)),
         GestureDetector(
           onTap: onTap,
           child: Row(
@@ -730,10 +707,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ],
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
                       color: const Color(0xFFEEF4FF),
                       borderRadius: BorderRadius.circular(20),
@@ -741,9 +715,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Text(
                       '전체 ${todos.length}',
                       style: const TextStyle(
-                        fontSize: 12,
-                        color: Color(0xFF0069FF),
-                      ),
+                          fontSize: 12, color: Color(0xFF0069FF)),
                     ),
                   ),
                 ],
@@ -753,10 +725,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 const Center(
                   child: Padding(
                     padding: EdgeInsets.symmetric(vertical: 16),
-                    child: Text(
-                      '할일이 없습니다',
-                      style: TextStyle(color: Colors.grey),
-                    ),
+                    child: Text('할일이 없습니다',
+                        style: TextStyle(color: Colors.grey)),
                   ),
                 )
               else
@@ -769,9 +739,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildTodoItem(TodoModel todo) {
-    final category = _categories
-        .where((c) => c.id == todo.categoryId)
-        .firstOrNull;
+    final category =
+        _categories.where((c) => c.id == todo.categoryId).firstOrNull;
 
     return GestureDetector(
       onLongPress: () => _showTodoActions(todo),
@@ -782,7 +751,9 @@ class _HomeScreenState extends State<HomeScreen> {
             GestureDetector(
               onTap: () => TodoService().toggleTodo(todo.id, !todo.isDone),
               child: Icon(
-                todo.isDone ? Icons.check_circle : Icons.radio_button_unchecked,
+                todo.isDone
+                    ? Icons.check_circle
+                    : Icons.radio_button_unchecked,
                 color: todo.isDone
                     ? const Color(0xFF0069FF)
                     : const Color(0xFFCCCCCC),
@@ -824,9 +795,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Text(
                   category.name,
                   style: const TextStyle(
-                    fontSize: 11,
-                    color: Color(0xFF0069FF),
-                  ),
+                      fontSize: 11, color: Color(0xFF0069FF)),
                 ),
               ),
             ],
@@ -849,35 +818,25 @@ class _HomeScreenState extends State<HomeScreen> {
       stream: _focusSessionsStream,
       builder: (context, snapshot) {
         final sessions = snapshot.data ?? [];
-        final totalDuration = sessions.fold<int>(
-          0,
-          (sum, s) => sum + s.actualDuration,
-        );
-        final drowsyCount = sessions.fold<int>(
-          0,
-          (sum, s) => sum + s.drowsyEventCount,
-        );
-        final drowsyDuration = sessions.fold<int>(
-          0,
-          (sum, s) => sum + s.drowsyDuration,
-        );
-        final phoneCount = sessions.fold<int>(
-          0,
-          (sum, s) => sum + s.phoneEventCount,
-        );
-        final phoneDuration = sessions.fold<int>(
-          0,
-          (sum, s) => sum + s.phoneDuration,
-        );
+        final totalDuration =
+            sessions.fold<int>(0, (sum, s) => sum + s.actualDuration);
+        final drowsyCount =
+            sessions.fold<int>(0, (sum, s) => sum + s.drowsyEventCount);
+        final drowsyDuration =
+            sessions.fold<int>(0, (sum, s) => sum + s.drowsyDuration);
+        final phoneCount =
+            sessions.fold<int>(0, (sum, s) => sum + s.phoneEventCount);
+        final phoneDuration =
+            sessions.fold<int>(0, (sum, s) => sum + s.phoneDuration);
         final (focusValue, focusUnit) = _formatFocusDuration(totalDuration);
         final focusRate = totalDuration <= 0
             ? '-'
             : (((totalDuration - drowsyDuration - phoneDuration) /
-                          totalDuration) *
-                      100)
-                  .clamp(0, 100)
-                  .round()
-                  .toString();
+                            totalDuration) *
+                        100)
+                    .clamp(0, 100)
+                    .round()
+                    .toString();
 
         return Container(
           padding: const EdgeInsets.all(16),
@@ -914,10 +873,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 const Center(
                   child: Padding(
                     padding: EdgeInsets.symmetric(vertical: 16),
-                    child: Text(
-                      '아직 오늘의 세션이 없어요',
-                      style: TextStyle(color: Colors.grey),
-                    ),
+                    child: Text('아직 오늘의 세션이 없어요',
+                        style: TextStyle(color: Colors.grey)),
                   ),
                 )
               else
@@ -1016,9 +973,7 @@ class _StatCard extends StatelessWidget {
                     TextSpan(
                       text: unit,
                       style: const TextStyle(
-                        fontSize: 13,
-                        color: Colors.black54,
-                      ),
+                          fontSize: 13, color: Colors.black54),
                     ),
                   ],
                 ),
