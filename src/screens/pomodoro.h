@@ -15,13 +15,6 @@ static uint32_t _pomo_totalSec  = 0;
 static uint32_t _pomo_remainSec = 0;
 static uint32_t _pomo_lastTick  = 0;
 
-// ─── Alert 타입 ───────────────────────────────────────────────────────────────
-#define ALERT_NONE   0
-#define ALERT_DROWSY 1
-#define ALERT_PHONE  2
-
-static int _alert_type = ALERT_NONE;
-
 // ─── firebase_handler.h 전방 선언 (나중에 include됨) ────────────────────────
 void get_iso_now(char *buf, size_t len);
 void gen_session_id(char *buf, size_t len);
@@ -37,19 +30,13 @@ static char _pomo_session_id[32] = {};
 static char _pomo_started_at[32] = {};
 
 // ─── UI 오브젝트 — 뽀모도로 ──────────────────────────────────────────────────
+static lv_obj_t *pomo_label_title = nullptr;
 static lv_obj_t *pomo_img_tomato  = nullptr;
 static lv_obj_t *pomo_label_timer = nullptr;
 static lv_obj_t *pomo_label_done  = nullptr;
 static lv_obj_t *pomo_btn_25      = nullptr;
 static lv_obj_t *pomo_btn_50      = nullptr;
 static lv_obj_t *pomo_btn_force   = nullptr;
-
-// ─── UI 오브젝트 — Alert 오버레이 ────────────────────────────────────────────
-static lv_obj_t *alert_overlay  = nullptr;
-static lv_obj_t *alert_symbol   = nullptr;
-static lv_obj_t *alert_label    = nullptr;
-static lv_anim_t alert_anim_sym;
-static lv_anim_t alert_anim_lbl;
 
 static lv_anim_t pomo_anim;
 
@@ -66,73 +53,6 @@ static void _pomo_start_anim(lv_coord_t base_y) {
     lv_anim_set_repeat_count(&pomo_anim, LV_ANIM_REPEAT_INFINITE);
     lv_anim_set_path_cb(&pomo_anim, lv_anim_path_ease_in_out);
     lv_anim_start(&pomo_anim);
-}
-
-// ─── Alert pulse 애니메이션 ──────────────────────────────────────────────────
-static void _alert_scale_sym_cb(void *obj, int32_t v) {
-    lv_obj_set_style_text_font((lv_obj_t *)obj,
-        v > 127 ? &lv_font_montserrat_48 : &lv_font_montserrat_40, LV_PART_MAIN);
-}
-static void _alert_scale_lbl_cb(void *obj, int32_t v) {
-    lv_obj_set_style_text_font((lv_obj_t *)obj,
-        v > 127 ? &nanum_korean_28 : &nanum_korean_22, LV_PART_MAIN);
-}
-
-static void _alert_start_pulse() {
-    lv_anim_init(&alert_anim_sym);
-    lv_anim_set_var(&alert_anim_sym, alert_symbol);
-    lv_anim_set_exec_cb(&alert_anim_sym, _alert_scale_sym_cb);
-    lv_anim_set_values(&alert_anim_sym, 0, 255);
-    lv_anim_set_time(&alert_anim_sym, 600);
-    lv_anim_set_playback_time(&alert_anim_sym, 600);
-    lv_anim_set_repeat_count(&alert_anim_sym, LV_ANIM_REPEAT_INFINITE);
-    lv_anim_set_path_cb(&alert_anim_sym, lv_anim_path_ease_in_out);
-    lv_anim_start(&alert_anim_sym);
-
-    lv_anim_init(&alert_anim_lbl);
-    lv_anim_set_var(&alert_anim_lbl, alert_label);
-    lv_anim_set_exec_cb(&alert_anim_lbl, _alert_scale_lbl_cb);
-    lv_anim_set_values(&alert_anim_lbl, 0, 255);
-    lv_anim_set_time(&alert_anim_lbl, 600);
-    lv_anim_set_playback_time(&alert_anim_lbl, 600);
-    lv_anim_set_repeat_count(&alert_anim_lbl, LV_ANIM_REPEAT_INFINITE);
-    lv_anim_set_path_cb(&alert_anim_lbl, lv_anim_path_ease_in_out);
-    lv_anim_start(&alert_anim_lbl);
-}
-
-static void _alert_stop_pulse() {
-    if (alert_symbol) lv_anim_delete(alert_symbol, _alert_scale_sym_cb);
-    if (alert_label)  lv_anim_delete(alert_label,  _alert_scale_lbl_cb);
-}
-
-// ─── Alert 오버레이 표시 — 이벤트 시작 기록 ──────────────────────────────────
-void show_alert(int type) {
-    if (alert_overlay == nullptr) return;
-    _alert_type = type;
-
-    lv_color_t color = (type == ALERT_DROWSY)
-        ? lv_color_hex(0xFFB800) : lv_color_hex(0xFF3B30);
-
-    lv_label_set_text(alert_symbol, LV_SYMBOL_WARNING);
-    lv_obj_set_style_text_color(alert_symbol, color, LV_PART_MAIN);
-    lv_obj_set_style_text_font(alert_symbol, &lv_font_montserrat_48, LV_PART_MAIN);
-    lv_obj_set_style_text_color(alert_label, color, LV_PART_MAIN);
-    lv_obj_set_style_text_font(alert_label, &nanum_korean_28, LV_PART_MAIN);
-    lv_label_set_text(alert_label,
-        type == ALERT_DROWSY ? "졸음 감지" : "핸드폰 감지");
-
-    lv_obj_clear_flag(alert_overlay, LV_OBJ_FLAG_HIDDEN);
-    _alert_start_pulse();
-    Serial.printf("[Alert] %s\n", type == ALERT_DROWSY ? "Drowsy" : "Phone");
-}
-
-// ─── Alert 숨김 ──────────────────────────────────────────────────────────────
-void hide_alert() {
-    if (alert_overlay == nullptr) return;
-    _alert_stop_pulse();
-    lv_obj_add_flag(alert_overlay, LV_OBJ_FLAG_HIDDEN);
-    _alert_type = ALERT_NONE;
-    Serial.println("[Alert] 숨김 → 뽀모도로 복귀");
 }
 
 // ─── 세션 종료 공통 처리 (타이머 완료 / 강제종료 공용) ───────────────────────
@@ -294,9 +214,18 @@ void pomo_rtdb_sync(const char *state, int duration, const char *started_at,
 // ─── 뽀모도로 UI 생성 ────────────────────────────────────────────────────────
 void create_pomodoro_ui() {
     lv_obj_t *scr = lv_scr_act();
-    lv_obj_set_style_bg_color(scr, lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    // 단색 배경
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x112038), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
+
+    // ── 제목 ─────────────────────────────────────────────────────────────────
+    pomo_label_title = lv_label_create(scr);
+    lv_obj_set_style_text_color(pomo_label_title, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_font(pomo_label_title, &pretendard_bold_46, LV_PART_MAIN);
+    lv_label_set_text(pomo_label_title, "뽀모도로");
+    lv_obj_align(pomo_label_title, LV_ALIGN_CENTER, 0, -160);
 
     // ── 토마토 이미지 ─────────────────────────────────────────────────────────
     pomo_img_tomato = lv_image_create(scr);
@@ -307,15 +236,15 @@ void create_pomodoro_ui() {
 
     // ── 타이머 텍스트 ─────────────────────────────────────────────────────────
     pomo_label_timer = lv_label_create(scr);
-    lv_obj_set_style_text_color(pomo_label_timer, lv_color_black(), LV_PART_MAIN);
-    lv_obj_set_style_text_font(pomo_label_timer, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_color(pomo_label_timer, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_font(pomo_label_timer, &pretendard_bold_77, LV_PART_MAIN);
     lv_label_set_text(pomo_label_timer, "25:00");
     lv_obj_align(pomo_label_timer, LV_ALIGN_CENTER, 0, 80);
 
     // ── 완료 메시지 ───────────────────────────────────────────────────────────
     pomo_label_done = lv_label_create(scr);
     lv_obj_set_style_text_color(pomo_label_done, lv_color_hex(0x1A6FE8), LV_PART_MAIN);
-    lv_obj_set_style_text_font(pomo_label_done, &nanum_korean_30, LV_PART_MAIN);
+    lv_obj_set_style_text_font(pomo_label_done, &pretendard_bold_77, LV_PART_MAIN);
     lv_label_set_text(pomo_label_done, "완료!");
     lv_obj_align(pomo_label_done, LV_ALIGN_CENTER, 0, 0);
 
@@ -336,12 +265,12 @@ void create_pomodoro_ui() {
     pomo_btn_25 = lv_button_create(scr);
     lv_obj_add_style(pomo_btn_25, &style_btn,    LV_STATE_DEFAULT);
     lv_obj_add_style(pomo_btn_25, &style_btn_pr, LV_STATE_PRESSED);
-    lv_obj_set_size(pomo_btn_25, 120, 56);
-    lv_obj_align(pomo_btn_25, LV_ALIGN_CENTER, -75, 100);
+    lv_obj_set_size(pomo_btn_25, 140, 64);
+    lv_obj_align(pomo_btn_25, LV_ALIGN_CENTER, -80, 100);
     lv_obj_t *lbl25 = lv_label_create(pomo_btn_25);
-    lv_label_set_text(lbl25, "25");
+    lv_label_set_text(lbl25, "25분");
     lv_obj_set_style_text_color(lbl25, lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl25, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl25, &pretendard_bold_35, LV_PART_MAIN);
     lv_obj_center(lbl25);
     lv_obj_add_event_cb(pomo_btn_25, pomo_btn25_cb, LV_EVENT_CLICKED, NULL);
 
@@ -349,12 +278,12 @@ void create_pomodoro_ui() {
     pomo_btn_50 = lv_button_create(scr);
     lv_obj_add_style(pomo_btn_50, &style_btn,    LV_STATE_DEFAULT);
     lv_obj_add_style(pomo_btn_50, &style_btn_pr, LV_STATE_PRESSED);
-    lv_obj_set_size(pomo_btn_50, 120, 56);
-    lv_obj_align(pomo_btn_50, LV_ALIGN_CENTER, 75, 100);
+    lv_obj_set_size(pomo_btn_50, 140, 64);
+    lv_obj_align(pomo_btn_50, LV_ALIGN_CENTER, 80, 100);
     lv_obj_t *lbl50 = lv_label_create(pomo_btn_50);
-    lv_label_set_text(lbl50, "50");
+    lv_label_set_text(lbl50, "50분");
     lv_obj_set_style_text_color(lbl50, lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl50, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl50, &pretendard_bold_35, LV_PART_MAIN);
     lv_obj_center(lbl50);
     lv_obj_add_event_cb(pomo_btn_50, pomo_btn50_cb, LV_EVENT_CLICKED, NULL);
 
@@ -377,33 +306,6 @@ void create_pomodoro_ui() {
     lv_obj_set_style_text_font(lbl_force, &lv_font_montserrat_16, LV_PART_MAIN);
     lv_obj_center(lbl_force);
     lv_obj_add_event_cb(pomo_btn_force, pomo_btn_force_cb, LV_EVENT_CLICKED, NULL);
-
-    // ── Alert 오버레이 ────────────────────────────────────────────────────────
-    alert_overlay = lv_obj_create(scr);
-    lv_obj_set_size(alert_overlay, LV_PCT(100), LV_PCT(100));
-    lv_obj_align(alert_overlay, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(alert_overlay, lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(alert_overlay, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_width(alert_overlay, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(alert_overlay, 0, LV_PART_MAIN);
-    lv_obj_clear_flag(alert_overlay, LV_OBJ_FLAG_SCROLLABLE);
-
-    alert_symbol = lv_label_create(alert_overlay);
-    lv_label_set_text(alert_symbol, LV_SYMBOL_WARNING);
-    lv_obj_set_style_text_font(alert_symbol, &lv_font_montserrat_48, LV_PART_MAIN);
-    lv_obj_set_style_text_color(alert_symbol, lv_color_hex(0xFFB800), LV_PART_MAIN);
-    lv_obj_align(alert_symbol, LV_ALIGN_CENTER, 0, -60);
-
-    alert_label = lv_label_create(alert_overlay);
-    lv_obj_set_style_text_font(alert_label, &nanum_korean_28, LV_PART_MAIN);
-    lv_obj_set_style_text_color(alert_label, lv_color_hex(0xFFB800), LV_PART_MAIN);
-    lv_label_set_long_mode(alert_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(alert_label, 300);
-    lv_obj_set_style_text_align(alert_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_align(alert_label, LV_ALIGN_CENTER, 0, 30);
-    lv_label_set_text(alert_label, "");
-
-    lv_obj_add_flag(alert_overlay, LV_OBJ_FLAG_HIDDEN);
 
     // ── 초기 상태 적용 ───────────────────────────────────────────────────────
     _pomo_update_ui();

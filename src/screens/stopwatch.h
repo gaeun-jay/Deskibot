@@ -15,7 +15,8 @@ void gen_session_id(char *buf, size_t len);
 void rtdb_send_state(const char *session_id, const char *type, const char *state,
                      int duration, const char *started_at,
                      const char *paused_at, int total_pause_sec);
-void sw_post_focus_session(const char *started_at, const char *ended_at,
+void sw_post_focus_session(const char *session_id,
+                           const char *started_at, const char *ended_at,
                            int total_pause_sec, uint32_t elapsed_ms,
                            PauseEvent *events, int event_count);
 
@@ -38,7 +39,9 @@ static PauseEvent _sw_pause_events[10] = {};  // 일시정지 이벤트 배열
 static int      _sw_pause_event_count  = 0;   // 배열 크기
 
 // ─── UI 오브젝트 ─────────────────────────────────────────────────────────────
-static lv_obj_t *sw_label_time = nullptr;
+static lv_obj_t *sw_label_min   = nullptr;
+static lv_obj_t *sw_label_colon = nullptr;
+static lv_obj_t *sw_label_sec   = nullptr;
 static lv_obj_t *sw_btn_play   = nullptr;
 static lv_obj_t *sw_btn_pause  = nullptr;
 static lv_obj_t *sw_btn_stop   = nullptr;
@@ -71,12 +74,16 @@ static void _sw_update_buttons() {
 // ─── 타이머 텍스트 업데이트 ──────────────────────────────────────────────────
 static void _sw_update_time() {
     uint32_t totalSec = _sw_elapsedMs / 1000;
-    uint32_t centis   = (_sw_elapsedMs % 1000) / 10;
     uint32_t sec      = totalSec % 60;
     uint32_t min      = totalSec / 60;
-    char buf[12];
-    snprintf(buf, sizeof(buf), "%d:%02d.%02d", (int)min, (int)sec, (int)centis);
-    lv_label_set_text(sw_label_time, buf);
+    char min_buf[6], sec_buf[4];
+    snprintf(min_buf, sizeof(min_buf), "%d", (int)min);
+    snprintf(sec_buf, sizeof(sec_buf), "%02d", (int)sec);
+    lv_label_set_text(sw_label_min, min_buf);
+    lv_label_set_text(sw_label_sec, sec_buf);
+    // 분 자릿수가 바뀌면 폭이 변하므로 콜론/초 위치를 매번 재정렬
+    lv_obj_align_to(sw_label_colon, sw_label_min, LV_ALIGN_OUT_RIGHT_MID, 4, 2);
+    lv_obj_align_to(sw_label_sec,   sw_label_colon, LV_ALIGN_OUT_RIGHT_MID, 4, -2);
 }
 
 // ─── LVGL 타이머 콜백 ────────────────────────────────────────────────────────
@@ -232,7 +239,7 @@ void sw_rtdb_sync(const char *state, const char *started_at, const char *paused_
                 _sw_pause_event_count++;
             }
         }
-        sw_post_focus_session(_sw_started_at, ended_at, _sw_total_pause_sec,
+        sw_post_focus_session(_sw_session_id, _sw_started_at, ended_at, _sw_total_pause_sec,
                               _sw_elapsedMs, _sw_pause_events, _sw_pause_event_count);
         _sw_state             = SW_IDLE;
         _sw_elapsedMs         = 0;
@@ -250,15 +257,34 @@ void sw_rtdb_sync(const char *state, const char *started_at, const char *paused_
 // ─── 스톱워치 UI 생성 ────────────────────────────────────────────────────────
 void create_stopwatch_ui() {
     lv_obj_t *scr = lv_scr_act();
-    lv_obj_set_style_bg_color(scr, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x112038), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
 
-    // ── 타이머 텍스트 ────────────────────────────────────────────────────────
-    sw_label_time = lv_label_create(scr);
-    lv_obj_set_style_text_color(sw_label_time, lv_color_black(), LV_PART_MAIN);
-    lv_obj_set_style_text_font(sw_label_time, &lv_font_montserrat_48, LV_PART_MAIN);
-    lv_label_set_text(sw_label_time, "0:00.00");
-    lv_obj_align(sw_label_time, LV_ALIGN_CENTER, 0, -40);
+    // ── 제목 ─────────────────────────────────────────────────────────────────
+    lv_obj_t *sw_label_title = lv_label_create(scr);
+    lv_obj_set_style_text_color(sw_label_title, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_font(sw_label_title, &pretendard_medium_23, LV_PART_MAIN);
+    lv_label_set_text(sw_label_title, "스톱워치");
+    lv_obj_align(sw_label_title, LV_ALIGN_CENTER, 0, -160);
+
+    // ── 타이머 텍스트 (분:초, 콜론만 큰 폰트) ──────────────────────────────────
+    sw_label_min = lv_label_create(scr);
+    lv_obj_set_style_text_color(sw_label_min, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_font(sw_label_min, &pretendard_semibold_81, LV_PART_MAIN);
+    lv_label_set_text(sw_label_min, "0");
+    lv_obj_align(sw_label_min, LV_ALIGN_CENTER, -60, -40);
+
+    sw_label_colon = lv_label_create(scr);
+    lv_obj_set_style_text_color(sw_label_colon, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_font(sw_label_colon, &pretendard_semibold_85, LV_PART_MAIN);
+    lv_label_set_text(sw_label_colon, ":");
+    lv_obj_align_to(sw_label_colon, sw_label_min, LV_ALIGN_OUT_RIGHT_MID, 4, 2);
+
+    sw_label_sec = lv_label_create(scr);
+    lv_obj_set_style_text_color(sw_label_sec, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_font(sw_label_sec, &pretendard_semibold_81, LV_PART_MAIN);
+    lv_label_set_text(sw_label_sec, "00");
+    lv_obj_align_to(sw_label_sec, sw_label_colon, LV_ALIGN_OUT_RIGHT_MID, 4, -2);
 
     // ── 버튼 스타일 ──────────────────────────────────────────────────────────
     static lv_style_t style_btn_blue;

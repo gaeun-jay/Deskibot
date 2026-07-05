@@ -9,6 +9,7 @@
 #include "screens/clock.h"
 #include "screens/stopwatch.h"
 #include "screens/pomodoro.h"
+#include "screens/popup.h"
 #include "screens/sound.h"
 #include "screens/voice.h"
 // voice.h extern 변수 정의
@@ -16,7 +17,6 @@ volatile VoiceState _voice_state = VOICE_IDLE;
 int16_t    *_rec_buf          = nullptr;
 uint32_t    _rec_bytes        = 0;
 TaskHandle_t _voice_task_handle = nullptr;
-#include "screens/deadline.h"
 #include "screens/glass_test.h"
 
 // ─── 디스플레이 드라이버 ─────────────────────────────────────────────────────

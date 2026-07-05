@@ -42,7 +42,7 @@
 #define LV_STDARG_INCLUDE       <stdarg.h>
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
-    /** Size of memory available for `lv_malloc()` in bytes (>= 2kB) */
+    /** Size of m밴emory available for `lv_malloc()` in bytes (>= 2kB) */
     #define LV_MEM_SIZE (64 * 1024U)          /**< [bytes] - PSRAM 있으니 넉넉하게 */
 
     /** Size of the memory expand for `lv_malloc()` in bytes */
@@ -204,7 +204,7 @@
 
 #define LV_CACHE_DEF_SIZE       0
 #define LV_IMAGE_HEADER_CACHE_DEF_CNT 0
-#define LV_GRADIENT_MAX_STOPS   2
+#define LV_GRADIENT_MAX_STOPS   16
 #define LV_COLOR_MIX_ROUND_OFS  0
 #define LV_OBJ_STYLE_CACHE      0
 #define LV_USE_OBJ_ID           0
@@ -270,10 +270,20 @@
 #define LV_FONT_UNSCII_8  0
 #define LV_FONT_UNSCII_16 0
 #define LV_FONT_CUSTOM_DECLARE \
-    extern const lv_font_t nanum_korean_20; \
-    extern const lv_font_t nanum_korean_22; \
-    extern const lv_font_t nanum_korean_28; \
-    extern const lv_font_t nanum_korean_30;
+    extern const lv_font_t pretendard_bold_139; \
+    extern const lv_font_t pretendard_regular_23; \
+    extern const lv_font_t pretendard_bold_46; \
+    extern const lv_font_t pretendard_bold_35; \
+    extern const lv_font_t pretendard_bold_77; \
+    extern const lv_font_t pretendard_medium_18; \
+    extern const lv_font_t pretendard_medium_23; \
+    extern const lv_font_t pretendard_semibold_81; \
+    extern const lv_font_t pretendard_semibold_85; \
+    extern const lv_font_t pretendard_semibold_35; \
+    extern const lv_font_t pretendard_regular_18; \
+    extern const lv_font_t pretendard_light_18; \
+    extern const lv_font_t pretendard_regular_28; \
+    extern const lv_font_t pretendard_semibold_28;
 #define LV_FONT_DEFAULT &lv_font_montserrat_14
 #define LV_FONT_FMT_TXT_LARGE 0
 #define LV_USE_FONT_COMPRESSED 0

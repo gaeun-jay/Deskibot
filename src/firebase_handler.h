@@ -57,7 +57,7 @@ struct NotifyTodo {
 static NotifyTodo _notify_todos[20] = {};
 static int        _notify_todo_count = 0;
 
-// deadline.h의 show_deadline 전방 선언 (include 순서 의존 없이)
+// popup.h의 show_deadline 전방 선언 (include 순서 의존 없이)
 void show_deadline(const char *time_str, const char *title_str, const char *left_str);
 
 // ─── 상태 추적 변수 (_rtdb_write_task 에서 참조) ────────────────────────────

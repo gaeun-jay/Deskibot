@@ -74,7 +74,7 @@ static StaticTask_t _play_task_tcb;
 // ─── 스레드 안전 상태 버퍼 ───────────────────────────────────────────────────
 // LVGL은 스레드 비안전 → _record_task/_play_task에서 직접 호출 금지
 // 여기에 쓰고, loop()의 voice_check_state()에서 LVGL 업데이트
-static char  _voice_status_buf[64] = "대기중";
+static char  _voice_status_buf[64] = "데스키봇에게 요청해 보세요";
 static volatile bool _voice_status_dirty = false;
 
 // ─── 역질문 대기 상태 (ask_todo_details 수신 시 저장) ─────────────────────────
@@ -380,7 +380,7 @@ static void _send_to_server() {
         http.end(); _rec_bytes = 0; return;
     }
 
-    _voice_set_status("음성 수신 중...");
+    _voice_set_status("데스키봇이 말하고 있어요");
     uint8_t *dst      = (uint8_t *)_rec_buf;
     uint32_t received = 0, dl = millis() + 20000;
     while (received < audio_len && millis() < dl) {
@@ -394,7 +394,7 @@ static void _send_to_server() {
 
     float dur = (float)_rec_bytes / (VOICE_SAMPLE_RATE * 2);
     Serial.printf("[TTS] %d bytes 수신 (%.1f초)\n", _rec_bytes, dur);
-    _voice_set_status("재생 준비");
+    _voice_set_status("데스키봇이 말하고 있어요");
 }
 
 // ─── 녹음 태스크 ─────────────────────────────────────────────────────────────
@@ -663,15 +663,8 @@ void voice_check_state() {
         // 재생/녹음 완료 → 버튼 색 복귀
         if (voice_btn_mic)
             lv_obj_set_style_bg_color(voice_btn_mic, lv_color_hex(0x1A6FE8), LV_STATE_DEFAULT);
-        if (_rec_bytes > 0) {
-            float rec_sec = (float)_rec_bytes / (VOICE_SAMPLE_RATE * sizeof(int16_t));
-            char buf[40];
-            snprintf(buf, sizeof(buf), "준비 완료 (%.1f초)", rec_sec);
-            strlcpy(_voice_status_buf, buf, sizeof(_voice_status_buf));
-            if (voice_dot[1]) lv_label_set_text((lv_obj_t*)voice_dot[1], _voice_status_buf);
-        } else {
-            if (voice_dot[1]) lv_label_set_text((lv_obj_t*)voice_dot[1], "대기중");
-        }
+        strlcpy(_voice_status_buf, "데스키봇에게 요청해 보세요", sizeof(_voice_status_buf));
+        if (voice_dot[1]) lv_label_set_text((lv_obj_t*)voice_dot[1], _voice_status_buf);
     }
     prev_state = _voice_state;
 }
@@ -688,7 +681,7 @@ static void _voice_btn_mic_cb(lv_event_t *e) {
         Serial.println("[Voice] 🎙️ 녹음 버튼 눌림 → 녹음 시작");
         _voice_state = VOICE_RECORDING;
         _rec_start_ms = millis();
-        _voice_set_status("녹음 중...");
+        _voice_set_status("사용자님의 음성을 인식하고 있어요");
         lv_obj_set_style_bg_color(voice_btn_mic, lv_color_hex(0xE83A1A), LV_STATE_DEFAULT);
         _voice_task_handle = xTaskCreateStaticPinnedToCore(
             _record_task, "rec",
@@ -719,7 +712,7 @@ static void _voice_btn_mic_cb(lv_event_t *e) {
 // ─── UI 생성 ──────────────────────────────────────────────────────────────────
 extern "C" void create_voice_ui() {
     lv_obj_t *scr = lv_scr_act();
-    lv_obj_set_style_bg_color(scr, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x112038), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
 
     static lv_style_t style_btn;
@@ -743,9 +736,12 @@ extern "C" void create_voice_ui() {
 
     // 상태 라벨
     voice_dot[1] = lv_label_create(scr);
-    lv_label_set_text((lv_obj_t*)voice_dot[1], "대기중");
-    lv_obj_set_style_text_color((lv_obj_t*)voice_dot[1], lv_color_hex(0x555555), LV_PART_MAIN);
-    lv_obj_set_style_text_font((lv_obj_t*)voice_dot[1], &nanum_korean_20, LV_PART_MAIN);
+    lv_label_set_text((lv_obj_t*)voice_dot[1], _voice_status_buf);
+    lv_obj_set_style_text_color((lv_obj_t*)voice_dot[1], lv_color_hex(0xA0AAB8), LV_PART_MAIN);
+    lv_obj_set_style_text_font((lv_obj_t*)voice_dot[1], &pretendard_medium_18, LV_PART_MAIN);
+    lv_label_set_long_mode((lv_obj_t*)voice_dot[1], LV_LABEL_LONG_WRAP);
+    lv_obj_set_width((lv_obj_t*)voice_dot[1], 320);
+    lv_obj_set_style_text_align((lv_obj_t*)voice_dot[1], LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_align((lv_obj_t*)voice_dot[1], LV_ALIGN_CENTER, 0, 90);
 
     Serial.println("[Voice] UI 생성 완료");

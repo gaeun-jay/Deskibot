@@ -2,6 +2,9 @@
 #include <Arduino.h>
 #include <lvgl.h>
 
+// ─── 배경 그라데이션 이미지 (디더링 적용, banding 방지) ──────────────────────
+LV_IMAGE_DECLARE(bg_clock);
+
 // ─── 시계 UI 오브젝트 (업데이트용) ──────────────────────────────────────────
 static lv_obj_t *label_time  = nullptr;
 static lv_obj_t *label_date  = nullptr;
@@ -13,6 +16,15 @@ static uint32_t _base_seconds = 0;
 static uint32_t _base_millis  = 0;
 static int _build_month = 1;
 static int _build_day   = 1;
+static int _build_wday  = 0;  // 0=SUN ... 6=SAT
+
+static const char *const WEEKDAY_NAMES[7] = {
+    "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"
+};
+static const char *const MONTH_NAMES[12] = {
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+};
 
 static int _month_num_from_str(const char *m) {
     if (!strncmp(m, "Jan", 3)) return 1;
@@ -29,10 +41,19 @@ static int _month_num_from_str(const char *m) {
     return 12;
 }
 
+// Sakamoto's algorithm — 0=Sunday ... 6=Saturday
+static int _day_of_week(int y, int m, int d) {
+    static const int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+    if (m < 3) y -= 1;
+    return (y + y / 4 - y / 100 + y / 400 + t[m - 1] + d) % 7;
+}
+
 void init_clock() {
     char mon[4] = {__DATE__[0], __DATE__[1], __DATE__[2], 0};
     _build_month = _month_num_from_str(mon);
     _build_day   = atoi(__DATE__ + 4);
+    int build_year = atoi(__DATE__ + 7);
+    _build_wday  = _day_of_week(build_year, _build_month, _build_day);
     int h = (__TIME__[0]-'0')*10 + (__TIME__[1]-'0');
     int m = (__TIME__[3]-'0')*10 + (__TIME__[4]-'0');
     int s = (__TIME__[6]-'0')*10 + (__TIME__[7]-'0');
@@ -53,14 +74,15 @@ static void clock_timer_cb(lv_timer_t *timer) {
     int hour12   = hour24 % 12;
     if (hour12 == 0) hour12 = 12;
 
-    char time_buf[8];
-    snprintf(time_buf, sizeof(time_buf), "%d:%02d", hour12, minute);
+    // 콜론 없이 시:분 사이 여백으로 구분 (139px 숫자 전용 폰트라 ':' 글리프 없음)
+    char time_buf[10];
+    snprintf(time_buf, sizeof(time_buf), "%d  %02d", hour12, minute);
     lv_label_set_text(label_time, time_buf);
     lv_label_set_text(label_ampm, hour24 >= 12 ? "PM" : "AM");
 
-    // 한글 UTF-8: 월=\xEC\x9B\x94, 일=\xEC\x9D\xBC
     char date_buf[32];
-    snprintf(date_buf, sizeof(date_buf), "%d\xEC\x9B\x94 %d\xEC\x9D\xBC", _build_month, _build_day);
+    snprintf(date_buf, sizeof(date_buf), "%s, %s %d",
+             WEEKDAY_NAMES[_build_wday], MONTH_NAMES[_build_month - 1], _build_day);
     lv_label_set_text(label_date, date_buf);
 }
 
@@ -78,30 +100,33 @@ void stop_clock_ui() {
 // ─── 시계 UI 생성 ────────────────────────────────────────────────────────────
 void create_clock_ui() {
     lv_obj_t *scr = lv_scr_act();
-    lv_obj_set_style_bg_color(scr, lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
+
+    // 위(진한 남색) → 아래(거의 검정) 세로 그라데이션 배경 (디더링된 이미지 — banding 없음)
+    lv_obj_t *bg = lv_image_create(scr);
+    lv_image_set_src(bg, &bg_clock);
+    lv_obj_align(bg, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_clear_flag(bg, LV_OBJ_FLAG_CLICKABLE);
 
     // ── 날짜 ─────────────────────────────────────────────────────────────────
     label_date = lv_label_create(scr);
-    lv_obj_set_style_text_color(label_date, lv_color_hex(0x888888), LV_PART_MAIN);
-    // 한글 포함 커스텀 폰트 (숫자+월+일)
-    lv_obj_set_style_text_font(label_date, &nanum_korean_30, LV_PART_MAIN);
+    lv_obj_set_style_text_color(label_date, lv_color_hex(0xA0AAB8), LV_PART_MAIN);
+    lv_obj_set_style_text_font(label_date, &pretendard_regular_23, LV_PART_MAIN);
     lv_label_set_text(label_date, "-- / --");
     // 날짜 위치 조정
     lv_obj_align(label_date, LV_ALIGN_CENTER, 0, -60);
 
     // ── 시간 ─────────────────────────────────────────────────────────────────
     label_time = lv_label_create(scr);
-    lv_obj_set_style_text_color(label_time, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_text_color(label_time, lv_color_white(), LV_PART_MAIN);
     // 시간 폰트 설정
-    lv_obj_set_style_text_font(label_time, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(label_time, &pretendard_bold_139, LV_PART_MAIN);
     lv_label_set_text(label_time, "--:--");
     // 시간 위치 조정
     lv_obj_align(label_time, LV_ALIGN_CENTER, -30, 40);
 
     // ── AM/PM ─────────────────────────────────────────────────────────────────
     label_ampm = lv_label_create(scr);
-    lv_obj_set_style_text_color(label_ampm, lv_color_hex(0x888888), LV_PART_MAIN);
+    lv_obj_set_style_text_color(label_ampm, lv_color_hex(0xA0AAB8), LV_PART_MAIN);
     // AM/PM 폰트 설정
     lv_obj_set_style_text_font(label_ampm, &lv_font_montserrat_20, LV_PART_MAIN);
     lv_label_set_text(label_ampm, "--");
