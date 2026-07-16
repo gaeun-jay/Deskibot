@@ -13,6 +13,7 @@ from detection.drowsy_detect import DrowsyDetector
 from detection.phone_detect  import PhoneDetector
 from tracking.pantilt        import PanTilt
 from comm.firebase_client    import FirebaseClient
+from comm.uart_client        import UartClient
 from comm.camera import update_frame, update_status, start_server
 from tracking.pantilt import PanTilt, _is_full_face
 
@@ -43,6 +44,7 @@ pantilt  = PanTilt()
 drowsy   = DrowsyDetector()
 phone    = PhoneDetector()
 firebase = FirebaseClient()
+uart     = UartClient()
 start_server()
 
 
@@ -128,9 +130,11 @@ try:
         else:
             state = "NORMAL" if has_face else ("POSE_ONLY" if has_pose else "NO_PERSON")
 
-        # -- Firebase: push detection state on change only ------------------
+        # -- Push detection state on change only ----------------------------
         if is_drowsy != _prev_drowsy or phone_detected != _prev_phone:
             firebase.update_detection(drowsy=is_drowsy, phone=phone_detected)
+            uart.update_detection(drowsy=is_drowsy, phone=phone_detected)
+            print(f"[{time.strftime('%H:%M:%S')}] UART → DROWSY:{int(is_drowsy)},PHONE:{int(phone_detected)}")
             _prev_drowsy = is_drowsy
             _prev_phone  = phone_detected
 
@@ -192,4 +196,5 @@ finally:
     picam.stop()
     phone.close()
     pantilt.close()
+    uart.close()
     print("[System] Clean exit")
