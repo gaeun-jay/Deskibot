@@ -9,16 +9,10 @@ struct PauseEvent {
     char resumed_at[32];  // ISO 8601 — 재개 / 종료 시
 };
 
-// ─── firebase_handler.h 전방 선언 (나중에 include됨) ────────────────────────
+// ─── 백엔드/시간 헬퍼 전방 선언 (나중에 include됨) ──────────────────────────
 void get_iso_now(char *buf, size_t len);
-void gen_session_id(char *buf, size_t len);
-void rtdb_send_state(const char *session_id, const char *type, const char *state,
-                     int duration, const char *started_at,
-                     const char *paused_at, int total_pause_sec);
-void sw_post_focus_session(const char *session_id,
-                           const char *started_at, const char *ended_at,
-                           int total_pause_sec, uint32_t elapsed_ms,
-                           PauseEvent *events, int event_count);
+bool aws_focus_send(const char *mode, const char *action,
+                    int planned_duration_sec);
 
 // ─── 스톱워치 상태 ───────────────────────────────────────────────────────────
 #define SW_IDLE    0
@@ -30,7 +24,7 @@ static uint32_t _sw_startMs   = 0;
 static uint32_t _sw_elapsedMs = 0;
 
 // ─── 세션 추적 변수 ──────────────────────────────────────────────────────────
-static char     _sw_session_id[32]     = {};  // 세션 고유 ID (esp_ 접두사)
+static char     _sw_session_id[64]     = {};  // 서버가 focus_state로 반환한 ID
 static char     _sw_started_at[32]     = {};  // 세션 시작 ISO
 static char     _sw_paused_at[32]      = {};  // 현재 일시정지 시작 ISO (재개/종료 시 "")
 static uint32_t _sw_pause_start_ms     = 0;   // 일시정지 시작 millis
@@ -99,7 +93,8 @@ static void sw_btn_play_cb(lv_event_t *e) {
 
     if (_sw_state == SW_IDLE) {
         // ── start ────────────────────────────────────────────────────────────
-        gen_session_id(_sw_session_id, sizeof(_sw_session_id));
+        if (!aws_focus_send("stopwatch", "start", 0)) return;
+        _sw_session_id[0] = '\0';  // focus_state에서 서버 ID를 받는다.
         get_iso_now(_sw_started_at, sizeof(_sw_started_at));
         _sw_state              = SW_RUNNING;
         _sw_startMs            = millis();
@@ -107,12 +102,11 @@ static void sw_btn_play_cb(lv_event_t *e) {
         _sw_total_pause_sec    = 0;
         _sw_pause_event_count  = 0;
         _sw_paused_at[0]       = '\0';
-        rtdb_send_state(_sw_session_id, "stopwatch", "start",
-                        0, _sw_started_at, "", 0);
-        Serial.println("[SW] 시작");
+        Serial.println("[SW] 시작 요청");
 
     } else if (_sw_state == SW_PAUSED) {
         // ── resume ───────────────────────────────────────────────────────────
+        if (!aws_focus_send("stopwatch", "resume", 0)) return;
         int pause_sec = (int)((millis() - _sw_pause_start_ms) / 1000);
         _sw_total_pause_sec += pause_sec;
 
@@ -128,8 +122,6 @@ static void sw_btn_play_cb(lv_event_t *e) {
         _sw_paused_at[0] = '\0';
         _sw_state        = SW_RUNNING;
         _sw_startMs      = millis() - _sw_elapsedMs;
-        rtdb_send_state(_sw_session_id, "stopwatch", "resume",
-                        0, _sw_started_at, "", _sw_total_pause_sec);
     }
     _sw_update_buttons();
 }
@@ -137,6 +129,7 @@ static void sw_btn_play_cb(lv_event_t *e) {
 static void sw_btn_pause_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     if (_sw_state != SW_RUNNING) return;
+    if (!aws_focus_send("stopwatch", "pause", 0)) return;
 
     // ── pause ─────────────────────────────────────────────────────────────
     _sw_elapsedMs      = millis() - _sw_startMs;
@@ -148,8 +141,6 @@ static void sw_btn_pause_cb(lv_event_t *e) {
     if (_sw_pause_event_count < 10)
         strlcpy(_sw_pause_events[_sw_pause_event_count].paused_at, _sw_paused_at, 32);
 
-    rtdb_send_state(_sw_session_id, "stopwatch", "pause",
-                    0, _sw_started_at, _sw_paused_at, _sw_total_pause_sec);
     _sw_update_time();
     _sw_update_buttons();
     Serial.printf("[SW] 일시정지 — slot=%d paused_at=%s\n",
@@ -158,6 +149,7 @@ static void sw_btn_pause_cb(lv_event_t *e) {
 
 static void sw_btn_stop_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (!aws_focus_send("stopwatch", "end", 0)) return;
 
     // ── end (일시정지 상태에서만 호출 가능) ──────────────────────────────────
     int last_pause_sec = (int)((millis() - _sw_pause_start_ms) / 1000);
@@ -173,11 +165,6 @@ static void sw_btn_stop_cb(lv_event_t *e) {
 
     Serial.printf("[SW] 종료 — total_events=%d elapsed=%ums pause_sec=%d\n",
                   _sw_pause_event_count, _sw_elapsedMs, _sw_total_pause_sec);
-    rtdb_send_state(_sw_session_id, "stopwatch", "end",
-                    0, _sw_started_at, "", _sw_total_pause_sec);
-    sw_post_focus_session(_sw_session_id, _sw_started_at, ended_at, _sw_total_pause_sec,
-                          _sw_elapsedMs, _sw_pause_events, _sw_pause_event_count);
-
     _sw_state             = SW_IDLE;
     _sw_elapsedMs         = 0;
     _sw_paused_at[0]      = '\0';
@@ -190,11 +177,11 @@ static void sw_btn_stop_cb(lv_event_t *e) {
     Serial.println("[SW] 종료");
 }
 
-// ─── 앱→ESP 동기화 (firebase_sync_from_app에서 호출) ─────────────────────────
-void sw_rtdb_sync(const char *state, const char *started_at, const char *paused_at,
-                  int total_pause_sec, const char *session_id) {
+// ─── 서버 focus_state 동기화 ─────────────────────────────────────────────────
+void sw_backend_sync(const char *state, const char *started_at, const char *paused_at,
+                     int total_pause_sec, const char *session_id) {
+    if (session_id[0]) strlcpy(_sw_session_id, session_id, sizeof(_sw_session_id));
     if (strcmp(state, "start") == 0 && _sw_state == SW_IDLE) {
-        strlcpy(_sw_session_id,  session_id,  sizeof(_sw_session_id));
         strlcpy(_sw_started_at,  started_at,  sizeof(_sw_started_at));
         _sw_state             = SW_RUNNING;
         _sw_startMs           = millis();
@@ -239,8 +226,6 @@ void sw_rtdb_sync(const char *state, const char *started_at, const char *paused_
                 _sw_pause_event_count++;
             }
         }
-        sw_post_focus_session(_sw_session_id, _sw_started_at, ended_at, _sw_total_pause_sec,
-                              _sw_elapsedMs, _sw_pause_events, _sw_pause_event_count);
         _sw_state             = SW_IDLE;
         _sw_elapsedMs         = 0;
         _sw_total_pause_sec   = 0;

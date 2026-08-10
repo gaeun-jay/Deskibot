@@ -44,9 +44,13 @@ enum AppScreen {
 };
 AppScreen current_screen = SCREEN_CLOCK;  // extern으로 firebase_handler.h에서 참조
 
-// ─── WiFi + Firebase ─────────────────────────────────────────────────────────
+// ─── WiFi + 백엔드 ───────────────────────────────────────────────────────────
 #include "wifi_handler.h"
 #include "firebase_handler.h"
+#include "aws_backend.h"
+
+// ─── RPi 감지 링크 (firebase_handler.h의 졸음/폰 플래그를 세움) ───────────────
+#include "uart_rpi.h"
 
 // ─── 화면 전환 함수 (전방 선언) ──────────────────────────────────────────────
 void switch_screen(AppScreen screen);
@@ -180,7 +184,13 @@ void handle_serial() {
     String input = Serial.readStringUntil('\n');
     input.trim();
 
-    if (input.startsWith("deadline ")) {
+    if (input == "popup drowsy") {
+        show_alert(ALERT_DROWSY);
+    } else if (input == "popup phone") {
+        show_alert(ALERT_PHONE);
+    } else if (input == "popup deadline") {
+        show_deadline("09:00 PM", "알고리즘 과제", "30분");
+    } else if (input.startsWith("deadline ")) {
         if (current_screen != SCREEN_CLOCK && current_screen != SCREEN_STOPWATCH) {
             Serial.println("[App] clock/stopwatch 화면이 아님 — deadline 무시");
             return;
@@ -194,8 +204,19 @@ void handle_serial() {
         String title_str = rest.substring(0, last_space);
         String left_str  = rest.substring(last_space + 1);
         show_deadline(time_str.c_str(), title_str.c_str(), left_str.c_str());
+    } else if (input.startsWith("token ")) {
+        // 테스트 유저 전환: NVS에 device_token 저장 + WS 재연결 (재플래싱 불필요)
+        if (_voice_state != VOICE_IDLE) {
+            Serial.println("[Token] 음성 처리 완료 후 다시 시도 필요");
+            return;
+        }
+        String tok = input.substring(6);
+        tok.trim();
+        if (aws_set_device_token(tok.c_str()))
+            voice_reset_user_context();
     } else {
-        Serial.printf("[App] 알 수 없는 입력: %s\n", input.c_str());
+        // 토큰 오타 입력이 평문 로그에 남지 않도록 원문은 출력하지 않는다.
+        Serial.println("[App] 알 수 없는 시리얼 명령");
     }
 }
 
@@ -302,7 +323,7 @@ void setup() {
     switch_screen(SCREEN_CLOCK);
     lv_timer_handler();  // WiFi 대기 전 초기 렌더
 
-    // 3. WiFi + Firebase (디스플레이 이후, I2S 이전 — Arduino IDE 테스트와 동일한 순서)
+    // 3. WiFi + 백엔드 (디스플레이 이후, I2S 이전)
     // SSL 레코드 버퍼(≥4KB)만 PSRAM에 할당 → 내부 힙 단편화와 무관
     // AES/SHA 등 소형 암호 버퍼는 내부 RAM 유지 (AES HW DMA가 PSRAM 접근 불가)
     mbedtls_platform_set_calloc_free(
@@ -316,7 +337,11 @@ void setup() {
         heap_caps_free
     );
     wifi_init();
-    firebase_init();
+    firebase_init();               // Firestore ToDo REST만 임시 유지
+    aws_backend_init();            // 집중 세션 WSS
+
+    // RPi 감지 링크 — 졸음/폰은 UART로 들어온다
+    rpi_uart_init();
 
     // 4. 오디오 (I2S DMA — 가장 마지막)
     sound_init();
@@ -330,18 +355,25 @@ void loop() {
     static uint32_t _diag_tick = 0;
     if (millis() - _diag_tick > 5000) {
         _diag_tick = millis();
-        Serial.printf("[Diag] heap=%d | touch=%s | screen=%d\n",
+        // TLS 실패는 총 힙보다 '연속 내부 블록'이 먼저 마르면서 터진다 — 같이 찍는다.
+        Serial.printf("[Diag] heap=%d | int_free=%u int_block=%u | touch=%s | screen=%d | RPi=%s\n",
             ESP.getFreeHeap(),
+            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
             touch.isPressed() ? "YES" : "no",
-            (int)current_screen);
+            (int)current_screen,
+            rpi_uart_link_str());
     }
+
     handle_serial();
     voice_check_state();
-    firebase_check_alerts();       // 졸음/폰 감지 DB 폴링
-    firebase_sync_from_app();      // 앱→ESP 세션 동기화 (RTDB 폴링 결과 처리)
+    aws_backend_loop();            // WSS 수신/재연결 처리
+    aws_focus_sync_ui();           // focus_state → 현재 집중 화면
+    rpi_uart_poll();               // RPi 졸음/폰 감지 수신 (UART)
+    firebase_check_alerts();       // 위 플래그 → 팝업·경고음
     firebase_check_deadlines();    // todo 마감 알림 (30초 간격)
-    if (current_screen == SCREEN_VOICE && _voice_state == VOICE_IDLE) {
-        firebase_fetch_tasks();    // 음성 처리 중엔 SSL 메모리 충돌 방지를 위해 스킵
+    if (current_screen == SCREEN_VOICE) {
+        firebase_fetch_tasks();    // 음성 상태·내부 힙 가드는 firebase_fetch_tasks() 안에 있다
     }
     lv_timer_handler();
     delay(5);
