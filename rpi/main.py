@@ -11,6 +11,7 @@ from picamera2 import Picamera2
 
 from detection.drowsy_detect import DrowsyDetector
 from detection.phone_detect  import PhoneDetector
+from detection.debounce      import Debouncer
 from tracking.pantilt        import PanTilt
 from comm.firebase_client    import FirebaseClient
 from comm.uart_client        import UartClient
@@ -22,6 +23,13 @@ from tracking.pantilt import PanTilt, _is_full_face
 # ---------------------------------------------------------------------------
 OBJ_DETECT_EVERY      = 3     # Run object detection every N frames
 STATUS_PRINT_INTERVAL = 3.0   # Periodic status log interval (seconds)
+
+# Debounce delays (seconds): how long a raw flag must hold before it is confirmed.
+# Rise is 0.0 so detection registers immediately; only the release is damped.
+PHONE_RISE_SEC  = 0.0   # Report a phone the moment it is seen
+PHONE_FALL_SEC  = 2.0   # Keep phone state through hand/angle occlusion
+DROWSY_RISE_SEC = 0.0   # Drowsiness is already time-gated inside DrowsyDetector
+DROWSY_FALL_SEC = 2.0   # Ride out momentary face-mesh tracking dropouts
 
 # ---------------------------------------------------------------------------
 # Initialization
@@ -43,6 +51,8 @@ print("[Camera] Initialized")
 pantilt  = PanTilt()
 drowsy   = DrowsyDetector()
 phone    = PhoneDetector()
+phone_filter  = Debouncer(PHONE_RISE_SEC,  PHONE_FALL_SEC,  name="phone")
+drowsy_filter = Debouncer(DROWSY_RISE_SEC, DROWSY_FALL_SEC, name="drowsy")
 firebase = FirebaseClient()
 uart     = UartClient()
 start_server()
@@ -75,6 +85,7 @@ _phone_was_detected  = False
 _drowsy_was_detected = False
 _prev_drowsy         = False
 _prev_phone          = False
+_drowsy_reason       = "DROWSY_EYE"   # Latched cause of the current drowsy episode
 
 # ---------------------------------------------------------------------------
 # Main loop
@@ -83,13 +94,14 @@ print("[System] Detection loop started")
 
 try:
     while True:
-        rgb   = picam.capture_array()
-        frame = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        # Picamera2's 'RGB888' format actually yields BGR-ordered arrays
+        frame = picam.capture_array()
         frame = cv2.flip(frame, 1)
-        rgb   = cv2.flip(rgb, 1)
+        rgb   = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         h, w  = frame.shape[:2]
         now   = time.time()
+        mono  = time.monotonic()   # Shared clock for the debounce filters
         frame_count += 1
 
         face_res = face_mesh.process(rgb)
@@ -118,15 +130,25 @@ try:
         # -- Phone detection (throttled) ------------------------------------
         if frame_count % OBJ_DETECT_EVERY == 0:
             last_detections = phone.detect(rgb)
-        phone_detected = phone.draw(frame, last_detections, h, w)
+        raw_phone = phone.draw(frame, last_detections, h, w)
 
         # -- State determination --------------------------------------------
         is_drowsy = drowsy_eye or drowsy_face_lost
 
+        # Debounce both flags; everything below this point uses the filtered
+        # values so a one-frame dropout does not clear the state.
+        is_drowsy      = drowsy_filter.update(is_drowsy, mono)
+        phone_detected = phone_filter.update(raw_phone, mono)
+
+        # Latch why we became drowsy — the raw cause may already be gone while
+        # the filter is still holding the state through its fall delay.
         if drowsy_eye:
-            state = "DROWSY_EYE"
+            _drowsy_reason = "DROWSY_EYE"
         elif drowsy_face_lost:
-            state = "DROWSY_FACE_LOST"
+            _drowsy_reason = "DROWSY_FACE_LOST"
+
+        if is_drowsy:
+            state = _drowsy_reason
         else:
             state = "NORMAL" if has_face else ("POSE_ONLY" if has_pose else "NO_PERSON")
 
@@ -146,7 +168,9 @@ try:
         elif not phone_detected and _phone_was_detected:
             _phone_was_detected = False
             print(f"[{time.strftime('%H:%M:%S')}] Phone cleared")
-            firebase.on_phone_end()
+            # Report when the raw signal actually stopped, not when the
+            # debounce filter released, so the logged duration is honest.
+            firebase.on_phone_end(phone_filter.raw_false_since)
 
         # -- Firebase: drowsy event logging ---------------------------------
         if is_drowsy and not _drowsy_was_detected:
@@ -156,7 +180,7 @@ try:
         elif not is_drowsy and _drowsy_was_detected:
             _drowsy_was_detected = False
             print(f"[{time.strftime('%H:%M:%S')}] Drowsiness cleared")
-            firebase.on_drowsy_end()
+            firebase.on_drowsy_end(drowsy_filter.raw_false_since)
 
         # -- State transition log -------------------------------------------
         if state != _prev_state:
