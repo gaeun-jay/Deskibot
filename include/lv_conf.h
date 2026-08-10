@@ -270,7 +270,7 @@
 #define LV_FONT_UNSCII_8  0
 #define LV_FONT_UNSCII_16 0
 #define LV_FONT_CUSTOM_DECLARE \
-    extern const lv_font_t pretendard_bold_139; \
+    extern const lv_font_t pretendard_bold_137; \
     extern const lv_font_t pretendard_regular_23; \
     extern const lv_font_t pretendard_bold_46; \
     extern const lv_font_t pretendard_bold_35; \

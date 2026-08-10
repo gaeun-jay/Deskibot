@@ -8,9 +8,14 @@
 #include "esp_heap_caps.h"
 #include <WiFi.h>
 #include <WiFiClient.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
-#define VOICE_SERVER_IP     "10.242.4.133"
-#define VOICE_SERVER_PORT   8000
+#include "deskibot_tls.h"
+
+#define VOICE_SERVER_URL "https://api.deskibot.co.kr/hw/process"
+
+// aws_backend.h가 관리하는 NVS device token의 스레드 안전 복사 API.
+bool aws_get_device_token(char *out, size_t out_len);
 
 // ─── 핀 ──────────────────────────────────────────────────────────────────────
 #define VOICE_PIN_MCLK  42
@@ -54,9 +59,27 @@ extern char fs_task_etc[];
 extern char fs_task_health[];
 extern volatile bool _fs_tasks_ready;
 
+// ─── 이미지 에셋 선언 (캐릭터 · 마이크 버튼) ─────────────────────────────────
+LV_IMAGE_DECLARE(character_voice);
+LV_IMAGE_DECLARE(btn_mic);
+LV_IMAGE_DECLARE(voice_wave_dot);
+
 // ─── UI 오브젝트 ──────────────────────────────────────────────────────────────
-static lv_obj_t *voice_btn_mic = nullptr;
-static lv_obj_t *voice_dot[4]  = {};   // [0]=재생버튼, [1]=상태라벨
+static lv_obj_t *voice_char      = nullptr;
+static lv_obj_t *voice_btn_mic   = nullptr;
+static lv_obj_t *voice_dot[4]    = {};   // [0]=재생버튼, [1]=상태라벨
+static lv_obj_t *voice_dots_cont = nullptr;   // 파도타기 점 컨테이너
+static lv_obj_t *voice_wave[4]   = {};        // 점 4개
+static bool      _wave_running   = false;
+
+// ─── 화면 요소 위치 (466x466 원형 기준 · 실기기에서 미세조정) ────────────────
+#define VOICE_CHAR_Y_DEFAULT   -30   // 참고 시안의 문구·캐릭터·마이크 간격을 맞춘 기본 y
+#define VOICE_CHAR_Y_REC       -30   // 녹음 중에도 동일한 캐릭터 비율과 위치 유지
+#define VOICE_TEXT_Y_TOP      -148   // 캐릭터 위 텍스트 y (대기 문구를 조금 아래로)
+#define VOICE_TEXT_Y_REC      -148   // 녹음 중에도 안내 문구는 캐릭터 위에 유지
+#define VOICE_DOTS_Y           120   // 작은 파도 원을 캐릭터 아래에 배치
+#define VOICE_WAVE_Y_BASE       13
+#define VOICE_WAVE_Y_TOP         1
 
 // ─── I2S 마이크 핸들 ─────────────────────────────────────────────────────────
 static i2s_chan_handle_t _voice_rx = NULL;
@@ -74,13 +97,19 @@ static StaticTask_t _play_task_tcb;
 // ─── 스레드 안전 상태 버퍼 ───────────────────────────────────────────────────
 // LVGL은 스레드 비안전 → _record_task/_play_task에서 직접 호출 금지
 // 여기에 쓰고, loop()의 voice_check_state()에서 LVGL 업데이트
-static char  _voice_status_buf[64] = "데스키봇에게 요청해 보세요";
+static char  _voice_status_buf[64] = "데스키봇에게\n요청해 보세요";
 static volatile bool _voice_status_dirty = false;
 
 // ─── 역질문 대기 상태 (ask_todo_details 수신 시 저장) ─────────────────────────
 // 사용자가 시간/알림을 말하면 다음 요청에 X-Pending-* 헤더로 서버에 전달
 static char _pending_todo_content[128] = {};
 static char _pending_todo_date[16]     = {};
+
+// 테스트 사용자 전환 시 이전 사용자의 역질문 컨텍스트가 섞이지 않게 지운다.
+void voice_reset_user_context() {
+    _pending_todo_content[0] = '\0';
+    _pending_todo_date[0] = '\0';
+}
 
 // JSON 문자열에서 key의 string 값 추출 (단순 파싱 — 라이브러리 불필요)
 static bool _json_str(const char *json, const char *key, char *out, size_t out_len) {
@@ -279,7 +308,7 @@ void voice_audio_init() {
 }
 
 // ─── 스트림 정확히 N바이트 읽기 헬퍼 ─────────────────────────────────────────
-static bool _read_exact(WiFiClient *c, uint8_t *dst, uint32_t n) {
+static bool _read_exact(NetworkClient *c, uint8_t *dst, uint32_t n) {
     uint32_t got = 0, deadline = millis() + 5000;
     while (got < n && millis() < deadline) {
         if (c->available()) got += c->readBytes(dst + got, n - got);
@@ -291,16 +320,23 @@ static bool _read_exact(WiFiClient *c, uint8_t *dst, uint32_t n) {
 // ─── 서버 전송 → STT/LLM/TTS 수신 ───────────────────────────────────────────
 static void _send_to_server() {
     _voice_set_status("서버 전송 중...");
-    Serial.printf("\n[Server] POST http://%s:%d/process (%d bytes, %.1f초)\n",
-                  VOICE_SERVER_IP, VOICE_SERVER_PORT,
+    Serial.printf("\n[Server] POST %s (%d bytes, %.1f초)\n",
+                  VOICE_SERVER_URL,
                   _rec_bytes, (float)_rec_bytes / (VOICE_SAMPLE_RATE * 2));
 
-    WiFiClient  wifi_client;
+    char device_token[128] = {};
+    if (!aws_get_device_token(device_token, sizeof(device_token))) {
+        Serial.println("[Server] NVS device_token 미설정 — 음성 요청 취소");
+        _rec_bytes = 0;
+        return;
+    }
+
+    WiFiClientSecure wifi_client;
+    wifi_client.setCACert(DESKIBOT_ROOT_CA);
     HTTPClient  http;
-    char url_buf[64];
-    snprintf(url_buf, sizeof(url_buf), "http://%s:%d/process", VOICE_SERVER_IP, VOICE_SERVER_PORT);
-    http.begin(wifi_client, url_buf);
+    http.begin(wifi_client, VOICE_SERVER_URL);
     http.addHeader("Content-Type", "application/octet-stream");
+    http.addHeader("X-Device-Key", device_token);
     if (_pending_todo_content[0]) {
         http.addHeader("X-Pending-Content", _pending_todo_content);
         http.addHeader("X-Pending-Date",    _pending_todo_date);
@@ -321,7 +357,7 @@ static void _send_to_server() {
     }
 
     int resp_total = http.getSize();
-    WiFiClient *wifi_stream = http.getStreamPtr();
+    NetworkClient *wifi_stream = http.getStreamPtr();
     _voice_set_status("응답 처리 중...");
 
     // 1. STT 결과
@@ -650,7 +686,65 @@ static void _voice_set_status(const char *text) {
     _voice_status_dirty = true;
 }
 
-// ─── loop()에서 재생 완료 감지 ───────────────────────────────────────────────
+// ─── 파도타기 점 애니메이션 (순서대로 위아래로 물결) ─────────────────────────
+static void _voice_wave_start() {
+    if (_wave_running) return;
+    _wave_running = true;
+    for (int i = 0; i < 4; i++) {
+        lv_anim_t a;
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, voice_wave[i]);
+        lv_anim_set_exec_cb(&a, (lv_anim_exec_xcb_t)lv_obj_set_y);
+        lv_anim_set_values(&a, VOICE_WAVE_Y_BASE, VOICE_WAVE_Y_TOP);
+        lv_anim_set_time(&a, 360);
+        lv_anim_set_playback_time(&a, 360);
+        lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+        lv_anim_set_delay(&a, i * 120);             // 원마다 시차 → 물결
+        lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+        lv_anim_start(&a);
+    }
+}
+static void _voice_wave_stop() {
+    if (!_wave_running) return;
+    _wave_running = false;
+    for (int i = 0; i < 4; i++) {
+        lv_anim_delete(voice_wave[i], (lv_anim_exec_xcb_t)lv_obj_set_y);
+        lv_obj_set_y(voice_wave[i], VOICE_WAVE_Y_BASE);
+    }
+}
+
+// ─── 상태별 레이아웃 (LVGL 스레드에서만 호출) ────────────────────────────────
+static void _voice_apply_layout(VoiceState st) {
+    bool recording = (st == VOICE_RECORDING);
+    bool busy      = (st == VOICE_PROCESSING || st == VOICE_PLAYING);
+
+    // 캐릭터: 녹음 중엔 위로 올려 아래 텍스트 자리 확보
+    lv_obj_align(voice_char, LV_ALIGN_CENTER, 0,
+                 recording ? VOICE_CHAR_Y_REC : VOICE_CHAR_Y_DEFAULT);
+
+    // 상태 텍스트: 녹음 중엔 캐릭터 아래, 그 외엔 캐릭터 위
+    lv_obj_align((lv_obj_t*)voice_dot[1], LV_ALIGN_CENTER, 0,
+                 recording ? VOICE_TEXT_Y_REC : VOICE_TEXT_Y_TOP);
+
+    // 대기 중에만 마이크를 보이고, 녹음을 시작하면 파동 원으로 교체한다.
+    if (st == VOICE_IDLE) lv_obj_clear_flag(voice_btn_mic, LV_OBJ_FLAG_HIDDEN);
+    else                  lv_obj_add_flag  (voice_btn_mic, LV_OBJ_FLAG_HIDDEN);
+
+    // 녹음·서버 처리·재생 동안 파도타기 원을 표시한다.
+    // 녹음 중에는 원 영역을 다시 누르면 녹음이 종료된다.
+    if (recording || busy) {
+        lv_obj_clear_flag(voice_dots_cont, LV_OBJ_FLAG_HIDDEN);
+        if (recording) lv_obj_add_flag  (voice_dots_cont, LV_OBJ_FLAG_CLICKABLE);
+        else           lv_obj_clear_flag(voice_dots_cont, LV_OBJ_FLAG_CLICKABLE);
+        _voice_wave_start();
+    } else {
+        lv_obj_add_flag(voice_dots_cont, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(voice_dots_cont, LV_OBJ_FLAG_CLICKABLE);
+        _voice_wave_stop();
+    }
+}
+
+// ─── loop()에서 상태 전환 감지 ───────────────────────────────────────────────
 void voice_check_state() {
     // 타 태스크가 _voice_set_status()로 버퍼에 쓴 내용을 여기서 LVGL에 반영
     if (_voice_status_dirty) {
@@ -658,15 +752,17 @@ void voice_check_state() {
         _voice_status_dirty = false;
     }
 
-    static int prev_state = VOICE_IDLE;
-    if (prev_state != VOICE_IDLE && _voice_state == VOICE_IDLE) {
-        // 재생/녹음 완료 → 버튼 색 복귀
-        if (voice_btn_mic)
-            lv_obj_set_style_bg_color(voice_btn_mic, lv_color_hex(0x1A6FE8), LV_STATE_DEFAULT);
-        strlcpy(_voice_status_buf, "데스키봇에게 요청해 보세요", sizeof(_voice_status_buf));
-        if (voice_dot[1]) lv_label_set_text((lv_obj_t*)voice_dot[1], _voice_status_buf);
+    static VoiceState prev_state = VOICE_IDLE;
+    VoiceState st = _voice_state;
+    if (st != prev_state) {
+        _voice_apply_layout(st);
+        if (st == VOICE_IDLE) {
+            // 대기 화면 복귀: 안내 문구 복원
+            strlcpy(_voice_status_buf, "데스키봇에게\n요청해 보세요", sizeof(_voice_status_buf));
+            if (voice_dot[1]) lv_label_set_text((lv_obj_t*)voice_dot[1], _voice_status_buf);
+        }
+        prev_state = st;
     }
-    prev_state = _voice_state;
 }
 
 // ─── 버튼 콜백 ───────────────────────────────────────────────────────────────
@@ -681,8 +777,7 @@ static void _voice_btn_mic_cb(lv_event_t *e) {
         Serial.println("[Voice] 🎙️ 녹음 버튼 눌림 → 녹음 시작");
         _voice_state = VOICE_RECORDING;
         _rec_start_ms = millis();
-        _voice_set_status("사용자님의 음성을 인식하고 있어요");
-        lv_obj_set_style_bg_color(voice_btn_mic, lv_color_hex(0xE83A1A), LV_STATE_DEFAULT);
+        _voice_set_status("사용자님의 음성을\n인식하고 있어요");
         _voice_task_handle = xTaskCreateStaticPinnedToCore(
             _record_task, "rec",
             sizeof(_rec_task_stack) / sizeof(StackType_t),
@@ -691,7 +786,6 @@ static void _voice_btn_mic_cb(lv_event_t *e) {
             Serial.printf("[Voice] ❌ 녹음 태스크 생성 실패 (heap=%d)\n",
                           heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
             _voice_state = VOICE_IDLE;
-            lv_obj_set_style_bg_color(voice_btn_mic, lv_color_hex(0x1A6FE8), LV_STATE_DEFAULT);
             _voice_set_status("메모리 부족");
         }
     } else if (_voice_state == VOICE_RECORDING) {
@@ -702,7 +796,6 @@ static void _voice_btn_mic_cb(lv_event_t *e) {
         }
         Serial.println("[Voice] ⏹️ 녹음 버튼 눌림 → 녹음 종료");
         _voice_state = VOICE_IDLE;
-        lv_obj_set_style_bg_color(voice_btn_mic, lv_color_hex(0x1A6FE8), LV_STATE_DEFAULT);
         // 태스크가 IDLE 감지 후 스스로 종료 — 완료 로그는 태스크에서 출력
     } else {
         Serial.printf("[Voice] 녹음 버튼 무시 (현재 상태: %d)\n", _voice_state);
@@ -712,37 +805,50 @@ static void _voice_btn_mic_cb(lv_event_t *e) {
 // ─── UI 생성 ──────────────────────────────────────────────────────────────────
 extern "C" void create_voice_ui() {
     lv_obj_t *scr = lv_scr_act();
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0x112038), LV_PART_MAIN);
+    // 기존(0x112038)보다 더 어두운 배경
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x0A121E), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
 
-    static lv_style_t style_btn;
-    lv_style_init(&style_btn);
-    lv_style_set_radius(&style_btn, LV_RADIUS_CIRCLE);
-    lv_style_set_border_width(&style_btn, 0);
-    lv_style_set_shadow_width(&style_btn, 0);
-    lv_style_set_text_color(&style_btn, lv_color_white());
-    lv_style_set_text_font(&style_btn, &lv_font_montserrat_30);
-
-    // 가운데: 녹음 버튼 (파란색 → 녹음 중 빨간색)
-    voice_btn_mic = lv_button_create(scr);
-    lv_obj_add_style(voice_btn_mic, &style_btn, LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(voice_btn_mic, lv_color_hex(0x1A6FE8), LV_STATE_DEFAULT);
-    lv_obj_set_size(voice_btn_mic, 120, 120);
-    lv_obj_align(voice_btn_mic, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_t *lbl_rec = lv_label_create(voice_btn_mic);
-    lv_label_set_text(lbl_rec, LV_SYMBOL_AUDIO);
-    lv_obj_center(lbl_rec);
-    lv_obj_add_event_cb(voice_btn_mic, _voice_btn_mic_cb, LV_EVENT_CLICKED, NULL);
-
-    // 상태 라벨
+    // ── 상태 라벨 (캐릭터 상단, 2줄) ──────────────────────────────────────────
     voice_dot[1] = lv_label_create(scr);
     lv_label_set_text((lv_obj_t*)voice_dot[1], _voice_status_buf);
-    lv_obj_set_style_text_color((lv_obj_t*)voice_dot[1], lv_color_hex(0xA0AAB8), LV_PART_MAIN);
-    lv_obj_set_style_text_font((lv_obj_t*)voice_dot[1], &pretendard_medium_18, LV_PART_MAIN);
+    lv_obj_set_style_text_color((lv_obj_t*)voice_dot[1], lv_color_hex(0xE5F0FF), LV_PART_MAIN);
+    lv_obj_set_style_text_font((lv_obj_t*)voice_dot[1], &pretendard_medium_23, LV_PART_MAIN);
     lv_label_set_long_mode((lv_obj_t*)voice_dot[1], LV_LABEL_LONG_WRAP);
-    lv_obj_set_width((lv_obj_t*)voice_dot[1], 320);
+    lv_obj_set_width((lv_obj_t*)voice_dot[1], 360);
     lv_obj_set_style_text_align((lv_obj_t*)voice_dot[1], LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_align((lv_obj_t*)voice_dot[1], LV_ALIGN_CENTER, 0, 90);
+    lv_obj_align((lv_obj_t*)voice_dot[1], LV_ALIGN_CENTER, 0, VOICE_TEXT_Y_TOP);
+
+    // ── 캐릭터 (가운데보다 살짝 위) ──────────────────────────────────────────
+    voice_char = lv_image_create(scr);
+    lv_image_set_src(voice_char, &character_voice);
+    lv_image_set_scale(voice_char, 276);  // 210x207px -> 약 226x223px
+    lv_obj_align(voice_char, LV_ALIGN_CENTER, 0, VOICE_CHAR_Y_DEFAULT);
+    lv_obj_clear_flag(voice_char, LV_OBJ_FLAG_CLICKABLE);
+
+    // ── 마이크 버튼 (캐릭터 아래) ────────────────────────────────────────────
+    voice_btn_mic = lv_image_create(scr);
+    lv_image_set_src(voice_btn_mic, &btn_mic);
+    lv_image_set_scale(voice_btn_mic, 215);  // 120px -> 약 101px
+    lv_obj_align(voice_btn_mic, LV_ALIGN_CENTER, 0, 145);
+    lv_obj_add_flag(voice_btn_mic, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(voice_btn_mic, _voice_btn_mic_cb, LV_EVENT_CLICKED, NULL);
+
+    // ── 파도타기 점 4개 (서버 처리~재생 중 표시, 기본 숨김) ──────────────────
+    voice_dots_cont = lv_obj_create(scr);
+    lv_obj_remove_style_all(voice_dots_cont);
+    lv_obj_set_size(voice_dots_cont, 162, 52);
+    lv_obj_align(voice_dots_cont, LV_ALIGN_CENTER, 0, VOICE_DOTS_Y);
+    lv_obj_clear_flag(voice_dots_cont, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(voice_dots_cont, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(voice_dots_cont, _voice_btn_mic_cb, LV_EVENT_CLICKED, NULL);
+    for (int i = 0; i < 4; i++) {
+        voice_wave[i] = lv_image_create(voice_dots_cont);
+        lv_image_set_src(voice_wave[i], &voice_wave_dot);
+        lv_image_set_scale(voice_wave[i], 136);  // 48px -> 약 26px
+        lv_obj_clear_flag(voice_wave[i], LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_pos(voice_wave[i], i * 38, VOICE_WAVE_Y_BASE);
+    }
 
     Serial.println("[Voice] UI 생성 완료");
 }

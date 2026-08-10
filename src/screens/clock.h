@@ -6,9 +6,9 @@
 LV_IMAGE_DECLARE(bg_clock);
 
 // ─── 시계 UI 오브젝트 (업데이트용) ──────────────────────────────────────────
-static lv_obj_t *label_time  = nullptr;
-static lv_obj_t *label_date  = nullptr;
-static lv_obj_t *label_ampm  = nullptr;
+static lv_obj_t *label_time   = nullptr;  // 시 (24시간제)
+static lv_obj_t *label_minute = nullptr;  // 분
+static lv_obj_t *label_date   = nullptr;
 static lv_timer_t *clock_timer = nullptr;  // 타이머 핸들
 
 // ─── 빌드 시각 기반 소프트 클럭 ─────────────────────────────────────────────
@@ -67,18 +67,17 @@ static uint32_t now_seconds() {
 
 // ─── 시계 업데이트 타이머 ────────────────────────────────────────────────────
 static void clock_timer_cb(lv_timer_t *timer) {
-    if (!label_time || !label_date || !label_ampm) return;  // 화면 전환 후 보호
+    if (!label_time || !label_minute || !label_date) return;  // 화면 전환 후 보호
     uint32_t sec = now_seconds();
     int hour24   = sec / 3600UL;
     int minute   = (sec / 60UL) % 60;
-    int hour12   = hour24 % 12;
-    if (hour12 == 0) hour12 = 12;
 
-    // 콜론 없이 시:분 사이 여백으로 구분 (139px 숫자 전용 폰트라 ':' 글리프 없음)
-    char time_buf[10];
-    snprintf(time_buf, sizeof(time_buf), "%d  %02d", hour12, minute);
-    lv_label_set_text(label_time, time_buf);
-    lv_label_set_text(label_ampm, hour24 >= 12 ? "PM" : "AM");
+    // 24시간제, 항상 0 채워서 2자리로 표시
+    char hour_buf[4], min_buf[4];
+    snprintf(hour_buf, sizeof(hour_buf), "%02d", hour24);
+    snprintf(min_buf, sizeof(min_buf), "%02d", minute);
+    lv_label_set_text(label_time, hour_buf);
+    lv_label_set_text(label_minute, min_buf);
 
     char date_buf[32];
     snprintf(date_buf, sizeof(date_buf), "%s, %s %d",
@@ -92,9 +91,9 @@ void stop_clock_ui() {
         lv_timer_delete(clock_timer);
         clock_timer = nullptr;
     }
-    label_time = nullptr;
-    label_date = nullptr;
-    label_ampm = nullptr;
+    label_time   = nullptr;
+    label_minute = nullptr;
+    label_date   = nullptr;
 }
 
 // ─── 시계 UI 생성 ────────────────────────────────────────────────────────────
@@ -109,29 +108,24 @@ void create_clock_ui() {
 
     // ── 날짜 ─────────────────────────────────────────────────────────────────
     label_date = lv_label_create(scr);
-    lv_obj_set_style_text_color(label_date, lv_color_hex(0xA0AAB8), LV_PART_MAIN);
+    lv_obj_set_style_text_color(label_date, lv_color_hex(0xE5F0FF), LV_PART_MAIN);
     lv_obj_set_style_text_font(label_date, &pretendard_regular_23, LV_PART_MAIN);
     lv_label_set_text(label_date, "-- / --");
     // 날짜 위치 조정
-    lv_obj_align(label_date, LV_ALIGN_CENTER, 0, -60);
+    lv_obj_align(label_date, LV_ALIGN_CENTER, -90, 125);
 
-    // ── 시간 ─────────────────────────────────────────────────────────────────
+    // ── 시간 (시/분 세로 배열, 24시간제) ────────────────────────────────────
     label_time = lv_label_create(scr);
-    lv_obj_set_style_text_color(label_time, lv_color_white(), LV_PART_MAIN);
-    // 시간 폰트 설정
-    lv_obj_set_style_text_font(label_time, &pretendard_bold_139, LV_PART_MAIN);
-    lv_label_set_text(label_time, "--:--");
-    // 시간 위치 조정
-    lv_obj_align(label_time, LV_ALIGN_CENTER, -30, 40);
+    lv_obj_set_style_text_color(label_time, lv_color_hex(0xE5F0FF), LV_PART_MAIN);
+    lv_obj_set_style_text_font(label_time, &pretendard_bold_137, LV_PART_MAIN);
+    lv_label_set_text(label_time, "--");
+    lv_obj_align(label_time, LV_ALIGN_CENTER, -90, -70);
 
-    // ── AM/PM ─────────────────────────────────────────────────────────────────
-    label_ampm = lv_label_create(scr);
-    lv_obj_set_style_text_color(label_ampm, lv_color_hex(0xA0AAB8), LV_PART_MAIN);
-    // AM/PM 폰트 설정
-    lv_obj_set_style_text_font(label_ampm, &lv_font_montserrat_20, LV_PART_MAIN);
-    lv_label_set_text(label_ampm, "--");
-    // AM/PM 위치 조정 (시간 오른쪽 아래)
-    lv_obj_align_to(label_ampm, label_time, LV_ALIGN_OUT_RIGHT_BOTTOM, 15, -10);
+    label_minute = lv_label_create(scr);
+    lv_obj_set_style_text_color(label_minute, lv_color_hex(0xE5F0FF), LV_PART_MAIN);
+    lv_obj_set_style_text_font(label_minute, &pretendard_bold_137, LV_PART_MAIN);
+    lv_label_set_text(label_minute, "--");
+    lv_obj_align(label_minute, LV_ALIGN_CENTER, -90, 50);
 
     // ── 1초마다 시계 갱신 ────────────────────────────────────────────────────
     clock_timer = lv_timer_create(clock_timer_cb, 1000, NULL);

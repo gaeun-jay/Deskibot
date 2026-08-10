@@ -5,6 +5,10 @@
 // ─── 토마토 이미지 선언 ───────────────────────────────────────────────────────
 LV_IMAGE_DECLARE(tomato);
 
+// ─── 배경 이미지 선언 (선택/실행 화면 · 완료 화면) ────────────────────────────
+LV_IMAGE_DECLARE(bg_pomodoro_start);
+LV_IMAGE_DECLARE(bg_pomodoro_end);
+
 // ─── 뽀모도로 상태 ───────────────────────────────────────────────────────────
 #define POMO_IDLE    0
 #define POMO_RUNNING 1
@@ -15,21 +19,18 @@ static uint32_t _pomo_totalSec  = 0;
 static uint32_t _pomo_remainSec = 0;
 static uint32_t _pomo_lastTick  = 0;
 
-// ─── firebase_handler.h 전방 선언 (나중에 include됨) ────────────────────────
+// ─── 백엔드/시간 헬퍼 전방 선언 (나중에 include됨) ──────────────────────────
 void get_iso_now(char *buf, size_t len);
-void gen_session_id(char *buf, size_t len);
-void rtdb_send_state(const char *session_id, const char *type, const char *state,
-                     int duration, const char *started_at,
-                     const char *paused_at, int total_pause_sec);
-void pomo_post_focus_session(const char *session_id,
-                              const char *started_at, const char *ended_at,
-                              int planned_min, int actual_min);
+bool aws_focus_send(const char *mode, const char *action,
+                    int planned_duration_sec);
 
 // ─── 세션 추적 변수 ──────────────────────────────────────────────────────────
-static char _pomo_session_id[32] = {};
+static char _pomo_session_id[64] = {};
 static char _pomo_started_at[32] = {};
 
 // ─── UI 오브젝트 — 뽀모도로 ──────────────────────────────────────────────────
+static lv_obj_t *pomo_bg_start    = nullptr;
+static lv_obj_t *pomo_bg_end      = nullptr;
 static lv_obj_t *pomo_label_title = nullptr;
 static lv_obj_t *pomo_img_tomato  = nullptr;
 static lv_obj_t *pomo_label_timer = nullptr;
@@ -40,7 +41,16 @@ static lv_obj_t *pomo_btn_force   = nullptr;
 
 static lv_anim_t pomo_anim;
 
-#define POMO_TOMATO_BASE_Y  -50
+// 시작 화면은 bg_pomodoro_start 아트에 맞춰진 위치라 그대로 두고,
+// 진행 화면에서만 제목/토마토를 올린다 — 그대로 두면 제목이 타이머(77pt)와 겹친다.
+#define POMO_TOMATO_BASE_Y  -88     // 시작 화면(IDLE)
+#define POMO_TOMATO_RUN_Y  -130     // 진행 화면(RUNNING)
+#define POMO_TITLE_Y         30     // 시작 화면(IDLE)
+#define POMO_TITLE_RUN_Y     -8     // 진행 화면(RUNNING)
+// 타이머는 RUNNING에서만 보이므로 생성 시점에 한 번만 배치한다.
+// 실측 line_height: 제목(bold_46)=35, 타이머(bold_77)=68 → 중심 기준 ±17.5 / ±34.
+// 제목 -8 → -25.5~9.5, 타이머 64 → 30~98 이므로 둘 사이 간격은 20.5px.
+#define POMO_TIMER_RUN_Y     64     // 80 → 64 (위로)
 
 // ─── 둥둥 애니메이션 ─────────────────────────────────────────────────────────
 static void _pomo_start_anim(lv_coord_t base_y) {
@@ -57,37 +67,48 @@ static void _pomo_start_anim(lv_coord_t base_y) {
 
 // ─── 세션 종료 공통 처리 (타이머 완료 / 강제종료 공용) ───────────────────────
 static void _pomo_finish_session(const char *ended_at, int actual_min) {
-    int planned_min = (int)(_pomo_totalSec / 60);
-    pomo_post_focus_session(_pomo_session_id, _pomo_started_at, ended_at, planned_min, actual_min);
-    rtdb_send_state(_pomo_session_id, "pomodoro", "end",
-                    planned_min, _pomo_started_at, "", 0);
+    (void)ended_at;
+    (void)actual_min;
+    aws_focus_send("pomodoro", "end", 0);
 }
 
 // ─── 뽀모도로 상태 UI 업데이트 ───────────────────────────────────────────────
 static void _pomo_update_ui() {
     switch (_pomo_state) {
         case POMO_IDLE:
+            lv_obj_clear_flag(pomo_bg_start,     LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag  (pomo_bg_end,       LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(pomo_label_title,  LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(pomo_img_tomato,  LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(pomo_btn_25,       LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(pomo_btn_50,       LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag  (pomo_label_timer,  LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag  (pomo_label_done,   LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag  (pomo_btn_force,    LV_OBJ_FLAG_HIDDEN);
+            lv_obj_align(pomo_label_title, LV_ALIGN_CENTER, 0, POMO_TITLE_Y);
             _pomo_start_anim(POMO_TOMATO_BASE_Y);
             break;
 
         case POMO_RUNNING:
+            lv_obj_clear_flag(pomo_bg_start,     LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag  (pomo_bg_end,       LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(pomo_label_title,  LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(pomo_img_tomato,  LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(pomo_label_timer, LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(pomo_btn_force,   LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag  (pomo_btn_25,       LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag  (pomo_btn_50,       LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag  (pomo_label_done,   LV_OBJ_FLAG_HIDDEN);
-            _pomo_start_anim(POMO_TOMATO_BASE_Y);
+            lv_obj_align(pomo_label_title, LV_ALIGN_CENTER, 0, POMO_TITLE_RUN_Y);
+            _pomo_start_anim(POMO_TOMATO_RUN_Y);
             break;
 
         case POMO_DONE:
-            lv_obj_clear_flag(pomo_label_done,  LV_OBJ_FLAG_HIDDEN);
+            // 완료 배경 이미지에 "완료" 글씨가 포함되어 있어 제목/완료 라벨은 숨김
+            lv_obj_clear_flag(pomo_bg_end,      LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag  (pomo_bg_start,    LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag  (pomo_label_title, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag  (pomo_label_done,  LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag  (pomo_img_tomato,  LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag  (pomo_label_timer, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag  (pomo_btn_25,      LV_OBJ_FLAG_HIDDEN);
@@ -137,7 +158,8 @@ static void pomo_timer_cb(lv_timer_t *timer) {
 
 // ─── 버튼 콜백 ───────────────────────────────────────────────────────────────
 static void _pomo_start(int minutes) {
-    gen_session_id(_pomo_session_id, sizeof(_pomo_session_id));
+    if (!aws_focus_send("pomodoro", "start", minutes * 60)) return;
+    _pomo_session_id[0] = '\0';  // focus_state에서 서버 ID를 받는다.
     get_iso_now(_pomo_started_at, sizeof(_pomo_started_at));
     _pomo_state          = POMO_RUNNING;
     _pomo_totalSec       = (uint32_t)(minutes * 60);
@@ -145,9 +167,7 @@ static void _pomo_start(int minutes) {
     _pomo_lastTick       = millis();
     _pomo_update_timer_label();
     _pomo_update_ui();
-    rtdb_send_state(_pomo_session_id, "pomodoro", "start",
-                    minutes, _pomo_started_at, "", 0);
-    Serial.printf("[Pomo] %d분 시작\n", minutes);
+    Serial.printf("[Pomo] %d분 시작 요청\n", minutes);
 }
 
 static void pomo_btn25_cb(lv_event_t *e) {
@@ -182,11 +202,11 @@ static void pomo_btn_force_cb(lv_event_t *e) {
     lv_timer_set_repeat_count(rt, 1);
 }
 
-// ─── 앱→ESP 동기화 (firebase_sync_from_app에서 호출) ─────────────────────────
-void pomo_rtdb_sync(const char *state, int duration, const char *started_at,
-                    const char *session_id) {
+// ─── 서버 focus_state 동기화 ─────────────────────────────────────────────────
+void pomo_backend_sync(const char *state, int duration, const char *started_at,
+                       const char *session_id) {
+    if (session_id[0]) strlcpy(_pomo_session_id, session_id, sizeof(_pomo_session_id));
     if (strcmp(state, "start") == 0 && _pomo_state == POMO_IDLE) {
-        strlcpy(_pomo_session_id, session_id,  sizeof(_pomo_session_id));
         strlcpy(_pomo_started_at, started_at,  sizeof(_pomo_started_at));
         _pomo_state          = POMO_RUNNING;
         _pomo_totalSec       = (uint32_t)(duration * 60);
@@ -216,22 +236,33 @@ void create_pomodoro_ui() {
     lv_obj_t *scr = lv_scr_act();
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // 단색 배경
+    // 배경 이미지 (선택/실행 화면 · 완료 화면) — 상태에 따라 토글
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x112038), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
+
+    pomo_bg_start = lv_image_create(scr);
+    lv_image_set_src(pomo_bg_start, &bg_pomodoro_start);
+    lv_obj_align(pomo_bg_start, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_clear_flag(pomo_bg_start, LV_OBJ_FLAG_CLICKABLE);
+
+    pomo_bg_end = lv_image_create(scr);
+    lv_image_set_src(pomo_bg_end, &bg_pomodoro_end);
+    lv_obj_align(pomo_bg_end, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_clear_flag(pomo_bg_end, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(pomo_bg_end, LV_OBJ_FLAG_HIDDEN);
 
     // ── 제목 ─────────────────────────────────────────────────────────────────
     pomo_label_title = lv_label_create(scr);
     lv_obj_set_style_text_color(pomo_label_title, lv_color_white(), LV_PART_MAIN);
     lv_obj_set_style_text_font(pomo_label_title, &pretendard_bold_46, LV_PART_MAIN);
     lv_label_set_text(pomo_label_title, "뽀모도로");
-    lv_obj_align(pomo_label_title, LV_ALIGN_CENTER, 0, -160);
+    lv_obj_align(pomo_label_title, LV_ALIGN_CENTER, 0, 30);
 
     // ── 토마토 이미지 ─────────────────────────────────────────────────────────
     pomo_img_tomato = lv_image_create(scr);
     lv_image_set_src(pomo_img_tomato, &tomato);
-    lv_image_set_scale(pomo_img_tomato, 102);
-    lv_obj_align(pomo_img_tomato, LV_ALIGN_CENTER, 0, 0);
+    lv_image_set_scale(pomo_img_tomato, 130);
+    lv_obj_align(pomo_img_tomato, LV_ALIGN_CENTER, 0, -100);
     lv_obj_set_y(pomo_img_tomato, POMO_TOMATO_BASE_Y);
 
     // ── 타이머 텍스트 ─────────────────────────────────────────────────────────
@@ -239,7 +270,7 @@ void create_pomodoro_ui() {
     lv_obj_set_style_text_color(pomo_label_timer, lv_color_white(), LV_PART_MAIN);
     lv_obj_set_style_text_font(pomo_label_timer, &pretendard_bold_77, LV_PART_MAIN);
     lv_label_set_text(pomo_label_timer, "25:00");
-    lv_obj_align(pomo_label_timer, LV_ALIGN_CENTER, 0, 80);
+    lv_obj_align(pomo_label_timer, LV_ALIGN_CENTER, 0, POMO_TIMER_RUN_Y);
 
     // ── 완료 메시지 ───────────────────────────────────────────────────────────
     pomo_label_done = lv_label_create(scr);
@@ -251,22 +282,22 @@ void create_pomodoro_ui() {
     // ── 버튼 스타일 ───────────────────────────────────────────────────────────
     static lv_style_t style_btn;
     lv_style_init(&style_btn);
-    lv_style_set_bg_color(&style_btn, lv_color_hex(0x1A6FE8));
+    lv_style_set_bg_color(&style_btn, lv_color_hex(0x3A496B));
     lv_style_set_bg_opa(&style_btn, LV_OPA_COVER);
-    lv_style_set_radius(&style_btn, 16);
+    lv_style_set_radius(&style_btn, LV_RADIUS_CIRCLE);  // 첨부 시안처럼 캡슐형 버튼
     lv_style_set_border_width(&style_btn, 0);
     lv_style_set_shadow_width(&style_btn, 0);
 
     static lv_style_t style_btn_pr;
     lv_style_init(&style_btn_pr);
-    lv_style_set_bg_color(&style_btn_pr, lv_color_hex(0x1050B0));
+    lv_style_set_bg_color(&style_btn_pr, lv_color_hex(0x2C3854));
 
     // ── 25분 버튼 ─────────────────────────────────────────────────────────────
     pomo_btn_25 = lv_button_create(scr);
     lv_obj_add_style(pomo_btn_25, &style_btn,    LV_STATE_DEFAULT);
     lv_obj_add_style(pomo_btn_25, &style_btn_pr, LV_STATE_PRESSED);
-    lv_obj_set_size(pomo_btn_25, 140, 64);
-    lv_obj_align(pomo_btn_25, LV_ALIGN_CENTER, -80, 100);
+    lv_obj_set_size(pomo_btn_25, 126, 64);
+    lv_obj_align(pomo_btn_25, LV_ALIGN_CENTER, -75, 110);
     lv_obj_t *lbl25 = lv_label_create(pomo_btn_25);
     lv_label_set_text(lbl25, "25분");
     lv_obj_set_style_text_color(lbl25, lv_color_white(), LV_PART_MAIN);
@@ -278,8 +309,8 @@ void create_pomodoro_ui() {
     pomo_btn_50 = lv_button_create(scr);
     lv_obj_add_style(pomo_btn_50, &style_btn,    LV_STATE_DEFAULT);
     lv_obj_add_style(pomo_btn_50, &style_btn_pr, LV_STATE_PRESSED);
-    lv_obj_set_size(pomo_btn_50, 140, 64);
-    lv_obj_align(pomo_btn_50, LV_ALIGN_CENTER, 80, 100);
+    lv_obj_set_size(pomo_btn_50, 126, 64);
+    lv_obj_align(pomo_btn_50, LV_ALIGN_CENTER, 75, 110);
     lv_obj_t *lbl50 = lv_label_create(pomo_btn_50);
     lv_label_set_text(lbl50, "50분");
     lv_obj_set_style_text_color(lbl50, lv_color_white(), LV_PART_MAIN);
@@ -298,12 +329,14 @@ void create_pomodoro_ui() {
 
     pomo_btn_force = lv_button_create(scr);
     lv_obj_add_style(pomo_btn_force, &style_btn_force, LV_STATE_DEFAULT);
-    lv_obj_set_size(pomo_btn_force, 120, 44);
+    lv_obj_set_size(pomo_btn_force, 150, 46);   // 28px × 4글자 ≈ 112px — 120px면 빠듯함
     lv_obj_align(pomo_btn_force, LV_ALIGN_CENTER, 0, 160);
     lv_obj_t *lbl_force = lv_label_create(pomo_btn_force);
-    lv_label_set_text(lbl_force, "Finish");
+    lv_label_set_text(lbl_force, "그만하기");
     lv_obj_set_style_text_color(lbl_force, lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl_force, &lv_font_montserrat_16, LV_PART_MAIN);
+    // 폰트들이 사용 글자만 남기고 서브셋돼 있어 medium_23엔 '하'밖에 없다.
+    // semibold_28만 전체 한글(2445자)을 담고 있고 popup.h에서 이미 링크된다.
+    lv_obj_set_style_text_font(lbl_force, &pretendard_semibold_28, LV_PART_MAIN);
     lv_obj_center(lbl_force);
     lv_obj_add_event_cb(pomo_btn_force, pomo_btn_force_cb, LV_EVENT_CLICKED, NULL);
 
