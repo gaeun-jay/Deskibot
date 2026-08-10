@@ -12,3 +12,10 @@ compile_commands.json
 include/secrets.h
 server/.env
 server/*.json
+
+# 파이썬 빌드 산출물
+__pycache__/
+*.pyc
+
+# 시리얼 캡처 로그
+*.log
