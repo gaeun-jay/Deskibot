@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <lvgl.h>
+#include "../iso_time.h"
 #include <time.h>
 
 // ─── 일시정지 이벤트 구조체 (firebase_handler.h의 _build_pause_json에서 사용) ─
@@ -181,16 +182,58 @@ static void sw_btn_stop_cb(lv_event_t *e) {
 void sw_backend_sync(const char *state, const char *started_at, const char *paused_at,
                      int total_pause_sec, const char *session_id) {
     if (session_id[0]) strlcpy(_sw_session_id, session_id, sizeof(_sw_session_id));
+
+    // ── 재부팅·재연결 복원 ───────────────────────────────────────────────────
+    // 아래 분기들은 상태 '전이'만 다뤄서 pause는 SW_RUNNING에서만 받는다. 그래서
+    // 일시정지 중 재부팅하면 부팅 직후 SW_IDLE이라 복원이 통째로 무시됐고, 서버엔
+    // 세션이 그대로 남아 새 집중을 시작하면 서버가 거부했다. 절대 상태로 복원한다.
+    if (_sw_state == SW_IDLE && strcmp(state, "pause") == 0) {
+        time_t started = 0, paused_epoch = 0, now = 0;
+        if (!iso_to_epoch(started_at, started) || !iso_now_epoch(now)) {
+            Serial.println("[SW] 서버 세션 복원 실패 — 시각 정보 없음");
+            return;
+        }
+        if (!iso_to_epoch(paused_at, paused_epoch)) paused_epoch = now;
+
+        long run = (long)paused_epoch - (long)started - total_pause_sec;
+        if (run < 0) run = 0;
+
+        strlcpy(_sw_started_at, started_at, sizeof(_sw_started_at));
+        strlcpy(_sw_paused_at, paused_at[0] ? paused_at : "", sizeof(_sw_paused_at));
+        _sw_state             = SW_PAUSED;
+        _sw_elapsedMs         = (uint32_t)run * 1000u;
+        _sw_total_pause_sec   = total_pause_sec;
+        _sw_pause_event_count = 0;   // 지난 이벤트는 서버가 갖고 있다(로컬은 로그용)
+        // 부팅 직후 millis()가 작아 언더플로가 나지만, 이후 millis() - _sw_pause_start_ms
+        // 모듈러 연산으로 올바른 차이가 나온다(_sw_startMs와 같은 방식).
+        _sw_pause_start_ms = millis() - (uint32_t)((long)now - (long)paused_epoch) * 1000u;
+        _sw_update_time();
+        _sw_update_buttons();
+        Serial.printf("[SW] 서버 세션 복원: 일시정지 (경과 %lds, 누적정지 %ds)\n",
+                      run, total_pause_sec);
+        return;
+    }
+
     if (strcmp(state, "start") == 0 && _sw_state == SW_IDLE) {
+        // 로컬 버튼으로 시작하면 이미 SW_RUNNING이라 여기 오지 않는다.
+        // 여기 오는 건 진행 중 세션을 복원하는 경우뿐이므로 경과 시간을 살려야 한다.
+        long run = 0;
+        time_t started = 0, now = 0;
+        if (iso_to_epoch(started_at, started) && iso_now_epoch(now)) {
+            run = (long)now - (long)started - total_pause_sec;
+            if (run < 0) run = 0;
+        }
         strlcpy(_sw_started_at,  started_at,  sizeof(_sw_started_at));
         _sw_state             = SW_RUNNING;
-        _sw_startMs           = millis();
-        _sw_elapsedMs         = 0;
-        _sw_total_pause_sec   = 0;
+        _sw_elapsedMs         = (uint32_t)run * 1000u;
+        _sw_startMs           = millis() - _sw_elapsedMs;
+        _sw_total_pause_sec   = total_pause_sec;
         _sw_pause_event_count = 0;
         _sw_paused_at[0]      = '\0';
+        _sw_update_time();
         _sw_update_buttons();
-        Serial.println("[SW] 앱 동기화: 시작");
+        Serial.printf("[SW] 서버 세션 복원: 진행중 (경과 %lds, 누적정지 %ds)\n",
+                      run, total_pause_sec);
 
     } else if (strcmp(state, "pause") == 0 && _sw_state == SW_RUNNING) {
         _sw_elapsedMs      = millis() - _sw_startMs;
@@ -201,7 +244,7 @@ void sw_backend_sync(const char *state, const char *started_at, const char *paus
             strlcpy(_sw_pause_events[_sw_pause_event_count].paused_at, _sw_paused_at, 32);
         _sw_update_time();
         _sw_update_buttons();
-        Serial.println("[SW] 앱 동기화: 일시정지");
+        Serial.println("[SW] 서버 동기화: 일시정지");
 
     } else if (strcmp(state, "resume") == 0 && _sw_state == SW_PAUSED) {
         int ps = (int)((millis() - _sw_pause_start_ms) / 1000);
@@ -215,7 +258,7 @@ void sw_backend_sync(const char *state, const char *started_at, const char *paus
         _sw_state        = SW_RUNNING;
         _sw_startMs      = millis() - _sw_elapsedMs;
         _sw_update_buttons();
-        Serial.println("[SW] 앱 동기화: 재개");
+        Serial.println("[SW] 서버 동기화: 재개");
 
     } else if (strcmp(state, "end") == 0 && _sw_state != SW_IDLE) {
         char ended_at[32]; get_iso_now(ended_at, sizeof(ended_at));
@@ -235,7 +278,7 @@ void sw_backend_sync(const char *state, const char *started_at, const char *paus
         _sw_session_id[0]     = '\0';
         _sw_update_time();
         _sw_update_buttons();
-        Serial.println("[SW] 앱 동기화: 종료");
+        Serial.println("[SW] 서버 동기화: 종료");
     }
 }
 

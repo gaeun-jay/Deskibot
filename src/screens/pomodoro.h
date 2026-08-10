@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <lvgl.h>
+#include "../iso_time.h"
 
 // ─── 토마토 이미지 선언 ───────────────────────────────────────────────────────
 LV_IMAGE_DECLARE(tomato);
@@ -37,7 +38,10 @@ static lv_obj_t *pomo_label_timer = nullptr;
 static lv_obj_t *pomo_label_done  = nullptr;
 static lv_obj_t *pomo_btn_25      = nullptr;
 static lv_obj_t *pomo_btn_50      = nullptr;
-static lv_obj_t *pomo_btn_force   = nullptr;
+static lv_obj_t *pomo_touch_end   = nullptr;   // 진행 화면 전체를 덮는 투명 종료 영역
+
+#define POMO_DOUBLE_TAP_MS  500
+static uint32_t _pomo_last_tap_ms = 0;
 
 static lv_anim_t pomo_anim;
 
@@ -84,7 +88,7 @@ static void _pomo_update_ui() {
             lv_obj_clear_flag(pomo_btn_50,       LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag  (pomo_label_timer,  LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag  (pomo_label_done,   LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag  (pomo_btn_force,    LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag  (pomo_touch_end,     LV_OBJ_FLAG_HIDDEN);
             lv_obj_align(pomo_label_title, LV_ALIGN_CENTER, 0, POMO_TITLE_Y);
             _pomo_start_anim(POMO_TOMATO_BASE_Y);
             break;
@@ -95,7 +99,8 @@ static void _pomo_update_ui() {
             lv_obj_clear_flag(pomo_label_title,  LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(pomo_img_tomato,  LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(pomo_label_timer, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_clear_flag(pomo_btn_force,   LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(pomo_touch_end,   LV_OBJ_FLAG_HIDDEN);
+            _pomo_last_tap_ms = 0;   // 이전 화면의 탭이 이어지지 않게
             lv_obj_add_flag  (pomo_btn_25,       LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag  (pomo_btn_50,       LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag  (pomo_label_done,   LV_OBJ_FLAG_HIDDEN);
@@ -113,7 +118,7 @@ static void _pomo_update_ui() {
             lv_obj_add_flag  (pomo_label_timer, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag  (pomo_btn_25,      LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag  (pomo_btn_50,      LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag  (pomo_btn_force,   LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag  (pomo_touch_end,   LV_OBJ_FLAG_HIDDEN);
             lv_anim_delete(pomo_img_tomato, (lv_anim_exec_xcb_t)lv_obj_set_y);
             break;
     }
@@ -180,8 +185,7 @@ static void pomo_btn50_cb(lv_event_t *e) {
     _pomo_start(50);
 }
 
-static void pomo_btn_force_cb(lv_event_t *e) {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+static void _pomo_force_finish() {
     char ended_at[32];
     get_iso_now(ended_at, sizeof(ended_at));
     int elapsed_sec = (int)(_pomo_totalSec - _pomo_remainSec);
@@ -202,19 +206,43 @@ static void pomo_btn_force_cb(lv_event_t *e) {
     lv_timer_set_repeat_count(rt, 1);
 }
 
+// 진행 화면을 두 번 연속 탭하면 종료. 버튼을 두지 않아 오탭으로 세션이 끊기면
+// 안 되므로, 한 번만 누른 경우는 아무 일도 일어나지 않는다.
+static void pomo_double_tap_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (_pomo_state != POMO_RUNNING) return;
+    const uint32_t now = millis();
+    if (_pomo_last_tap_ms && now - _pomo_last_tap_ms <= POMO_DOUBLE_TAP_MS) {
+        _pomo_last_tap_ms = 0;
+        Serial.println("[Pomo] 두 번 탭 — 종료");
+        _pomo_force_finish();
+    } else {
+        _pomo_last_tap_ms = now;
+    }
+}
+
 // ─── 서버 focus_state 동기화 ─────────────────────────────────────────────────
 void pomo_backend_sync(const char *state, int duration, const char *started_at,
                        const char *session_id) {
     if (session_id[0]) strlcpy(_pomo_session_id, session_id, sizeof(_pomo_session_id));
     if (strcmp(state, "start") == 0 && _pomo_state == POMO_IDLE) {
+        // 로컬 버튼으로 시작한 경우는 이미 RUNNING이라 여기 오지 않는다.
+        // 여기 오는 건 재부팅·재연결로 서버의 진행 중 세션을 복원하는 경우뿐이므로,
+        // started_at 기준 경과 시간을 빼야 한다. 안 빼면 타이머가 처음부터 다시 돌아
+        // 정전 복구가 사실상 리셋이 된다.
         strlcpy(_pomo_started_at, started_at,  sizeof(_pomo_started_at));
         _pomo_state          = POMO_RUNNING;
         _pomo_totalSec       = (uint32_t)(duration * 60);
-        _pomo_remainSec      = _pomo_totalSec;
+        const uint32_t elapsed = iso_elapsed_sec(started_at);
+        // 이미 계획 시간을 넘겼으면 0으로 두고, 다음 타이머 틱이 자연 완료 경로로
+        // focus_end를 보내게 한다.
+        _pomo_remainSec      = (elapsed >= _pomo_totalSec) ? 0
+                                                          : _pomo_totalSec - elapsed;
         _pomo_lastTick       = millis();
         _pomo_update_timer_label();
         _pomo_update_ui();
-        Serial.printf("[Pomo] 앱 동기화: %d분 시작\n", duration);
+        Serial.printf("[Pomo] 서버 세션 복원: %d분 중 %us 경과 → 남은 %us\n",
+                      duration, (unsigned)elapsed, (unsigned)_pomo_remainSec);
 
     } else if (strcmp(state, "end") == 0 && _pomo_state == POMO_RUNNING) {
         // 앱이 먼저 종료 → ESP도 종료 (Firestore 기록은 앱이 담당)
@@ -227,7 +255,7 @@ void pomo_backend_sync(const char *state, int duration, const char *started_at,
             lv_timer_delete(t);
         }, 3000, NULL);
         lv_timer_set_repeat_count(rt, 1);
-        Serial.println("[Pomo] 앱 동기화: 종료");
+        Serial.println("[Pomo] 서버 동기화: 종료");
     }
 }
 
@@ -319,26 +347,16 @@ void create_pomodoro_ui() {
     lv_obj_add_event_cb(pomo_btn_50, pomo_btn50_cb, LV_EVENT_CLICKED, NULL);
 
     // ── 강제종료 버튼 (세션 진행 중에 표시) ──────────────────────────────────
-    static lv_style_t style_btn_force;
-    lv_style_init(&style_btn_force);
-    lv_style_set_bg_color(&style_btn_force, lv_color_hex(0xFF6B6B));
-    lv_style_set_bg_opa(&style_btn_force, LV_OPA_COVER);
-    lv_style_set_radius(&style_btn_force, 12);
-    lv_style_set_border_width(&style_btn_force, 0);
-    lv_style_set_shadow_width(&style_btn_force, 0);
-
-    pomo_btn_force = lv_button_create(scr);
-    lv_obj_add_style(pomo_btn_force, &style_btn_force, LV_STATE_DEFAULT);
-    lv_obj_set_size(pomo_btn_force, 150, 46);   // 28px × 4글자 ≈ 112px — 120px면 빠듯함
-    lv_obj_align(pomo_btn_force, LV_ALIGN_CENTER, 0, 160);
-    lv_obj_t *lbl_force = lv_label_create(pomo_btn_force);
-    lv_label_set_text(lbl_force, "그만하기");
-    lv_obj_set_style_text_color(lbl_force, lv_color_white(), LV_PART_MAIN);
-    // 폰트들이 사용 글자만 남기고 서브셋돼 있어 medium_23엔 '하'밖에 없다.
-    // semibold_28만 전체 한글(2445자)을 담고 있고 popup.h에서 이미 링크된다.
-    lv_obj_set_style_text_font(lbl_force, &pretendard_semibold_28, LV_PART_MAIN);
-    lv_obj_center(lbl_force);
-    lv_obj_add_event_cb(pomo_btn_force, pomo_btn_force_cb, LV_EVENT_CLICKED, NULL);
+    // 미관상 종료 버튼을 두지 않고, 진행 화면 전체를 두 번 탭하면 종료한다.
+    // 화면 객체(scr)에 콜백을 직접 붙이면 switch_screen()의 lv_obj_clean()이 자식만
+    // 지우고 콜백은 남겨 다른 화면에서도 동작하므로, 반드시 자식으로 만든다.
+    pomo_touch_end = lv_obj_create(scr);
+    lv_obj_remove_style_all(pomo_touch_end);
+    lv_obj_set_size(pomo_touch_end, LV_PCT(100), LV_PCT(100));
+    lv_obj_center(pomo_touch_end);
+    lv_obj_add_flag(pomo_touch_end, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(pomo_touch_end, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(pomo_touch_end, pomo_double_tap_cb, LV_EVENT_CLICKED, NULL);
 
     // ── 초기 상태 적용 ───────────────────────────────────────────────────────
     _pomo_update_ui();
