@@ -8,9 +8,13 @@ LV_IMAGE_DECLARE(popup_drowsy_bg);
 LV_IMAGE_DECLARE(popup_phone_bg);
 LV_IMAGE_DECLARE(popup_deadline_bg);
 
-#define ALERT_NONE   0
-#define ALERT_DROWSY 1
-#define ALERT_PHONE  2
+#define ALERT_NONE     0
+#define ALERT_DROWSY   1
+#define ALERT_PHONE    2
+#define ALERT_DEADLINE 3   // 소리 종류 구분용 — 감지 팝업 상태(_alert_type)로는 쓰지 않는다
+
+// sound.h가 popup.h 뒤에 include되므로 전방 선언한다.
+void sound_play(int alert_type);
 
 static int _alert_type = ALERT_NONE;
 
@@ -177,6 +181,10 @@ void show_deadline(const char *time_str, const char *title_str,
 
     dl_btn_ok = _popup_add_ok_button(
         dl_overlay, _dl_ok_cb, lv_color_hex(0x17285F), 118);
+
+    // 화면을 안 보고 있을 수 있으니 알림음도 함께 낸다. 감지 경고음과 달리
+    // 반복하지 않고 1회만 울린다(마감은 상태가 아니라 시점 알림).
+    sound_play(ALERT_DEADLINE);
 
     Serial.printf("[Deadline] %s | %s | left: %s\n",
                   title_str, time_str, left_str);
