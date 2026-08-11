@@ -105,7 +105,9 @@ void show_alert(int type) {
             : "Deskibot이 스마트폰 사용을 감지했어요\n다시 책상으로 돌아가, 집중해볼까요?");
     lv_obj_set_width(alert_message, 330);
     lv_label_set_long_mode(alert_message, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(alert_message, &pretendard_regular_18, LV_PART_MAIN);
+    lv_obj_set_style_text_font(alert_message, &pretendard_regular_20, LV_PART_MAIN);
+    // 두 줄 안내라 줄이 붙어 보인다 — 마감 팝업(한 줄)은 그대로 두고 여기만 띄운다.
+    lv_obj_set_style_text_line_space(alert_message, 10, LV_PART_MAIN);
     lv_obj_set_style_text_color(alert_message, lv_color_white(), LV_PART_MAIN);
     lv_obj_set_style_text_opa(alert_message, LV_OPA_90, LV_PART_MAIN);
     lv_obj_set_style_text_align(alert_message, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -158,7 +160,7 @@ void show_deadline(const char *time_str, const char *title_str,
 
     dl_time = lv_label_create(dl_overlay);
     lv_label_set_text(dl_time, time_str);
-    lv_obj_set_style_text_font(dl_time, &pretendard_regular_18, LV_PART_MAIN);
+    lv_obj_set_style_text_font(dl_time, &pretendard_regular_20, LV_PART_MAIN);
     lv_obj_set_style_text_color(dl_time, lv_color_white(), LV_PART_MAIN);
     lv_obj_set_style_text_opa(dl_time, LV_OPA_90, LV_PART_MAIN);
     lv_obj_align(dl_time, LV_ALIGN_CENTER, 0, 4);
@@ -167,10 +169,11 @@ void show_deadline(const char *time_str, const char *title_str,
     char left_buf[64];
     snprintf(left_buf, sizeof(left_buf), "남은 시간 %s", left_str);
     lv_label_set_text(dl_left, left_buf);
-    lv_obj_set_style_text_font(dl_left, &pretendard_light_18, LV_PART_MAIN);
+    lv_obj_set_style_text_font(dl_left, &pretendard_regular_20, LV_PART_MAIN);
     lv_obj_set_style_text_color(dl_left, lv_color_white(), LV_PART_MAIN);
     lv_obj_set_style_text_opa(dl_left, LV_OPA_60, LV_PART_MAIN);
-    lv_obj_align(dl_left, LV_ALIGN_CENTER, 0, 38);
+    // 시각(y=4, 높이 21)과 확인 버튼(y=118, 높이 48 → 94~142) 사이 여백 안에서 내린다.
+    lv_obj_align(dl_left, LV_ALIGN_CENTER, 0, 52);
 
     dl_btn_ok = _popup_add_ok_button(
         dl_overlay, _dl_ok_cb, lv_color_hex(0x17285F), 118);

@@ -48,13 +48,14 @@ static lv_anim_t pomo_anim;
 // 시작 화면은 bg_pomodoro_start 아트에 맞춰진 위치라 그대로 두고,
 // 진행 화면에서만 제목/토마토를 올린다 — 그대로 두면 제목이 타이머(77pt)와 겹친다.
 #define POMO_TOMATO_BASE_Y  -88     // 시작 화면(IDLE)
-#define POMO_TOMATO_RUN_Y  -130     // 진행 화면(RUNNING)
+#define POMO_TOMATO_RUN_Y  -100     // 진행 화면(RUNNING)
 #define POMO_TITLE_Y         30     // 시작 화면(IDLE)
-#define POMO_TITLE_RUN_Y     -8     // 진행 화면(RUNNING)
+#define POMO_TITLE_RUN_Y     22     // 진행 화면(RUNNING)
 // 타이머는 RUNNING에서만 보이므로 생성 시점에 한 번만 배치한다.
 // 실측 line_height: 제목(bold_46)=35, 타이머(bold_77)=68 → 중심 기준 ±17.5 / ±34.
-// 제목 -8 → -25.5~9.5, 타이머 64 → 30~98 이므로 둘 사이 간격은 20.5px.
-#define POMO_TIMER_RUN_Y     64     // 80 → 64 (위로)
+// 제목 22 → 4.5~39.5, 타이머 94 → 60~128 이므로 둘 사이 간격은 20.5px.
+// 종료 버튼(y=160)이 빠지면서 생긴 아래 여백만큼 셋을 같이 30px 내렸다.
+#define POMO_TIMER_RUN_Y     94
 
 // ─── 둥둥 애니메이션 ─────────────────────────────────────────────────────────
 static void _pomo_start_anim(lv_coord_t base_y) {

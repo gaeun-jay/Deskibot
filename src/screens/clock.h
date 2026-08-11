@@ -109,7 +109,7 @@ void create_clock_ui() {
     // ── 날짜 ─────────────────────────────────────────────────────────────────
     label_date = lv_label_create(scr);
     lv_obj_set_style_text_color(label_date, lv_color_hex(0xE5F0FF), LV_PART_MAIN);
-    lv_obj_set_style_text_font(label_date, &pretendard_regular_23, LV_PART_MAIN);
+    lv_obj_set_style_text_font(label_date, &pretendard_regular_25, LV_PART_MAIN);
     lv_label_set_text(label_date, "-- / --");
     // 날짜 위치 조정
     lv_obj_align(label_date, LV_ALIGN_CENTER, -90, 125);

@@ -813,7 +813,9 @@ extern "C" void create_voice_ui() {
     voice_dot[1] = lv_label_create(scr);
     lv_label_set_text((lv_obj_t*)voice_dot[1], _voice_status_buf);
     lv_obj_set_style_text_color((lv_obj_t*)voice_dot[1], lv_color_hex(0xE5F0FF), LV_PART_MAIN);
-    lv_obj_set_style_text_font((lv_obj_t*)voice_dot[1], &pretendard_medium_23, LV_PART_MAIN);
+    lv_obj_set_style_text_font((lv_obj_t*)voice_dot[1], &pretendard_medium_25, LV_PART_MAIN);
+    // 2줄 안내라 줄이 붙어 보인다(팝업 메시지는 10px).
+    lv_obj_set_style_text_line_space((lv_obj_t*)voice_dot[1], 8, LV_PART_MAIN);
     lv_label_set_long_mode((lv_obj_t*)voice_dot[1], LV_LABEL_LONG_WRAP);
     lv_obj_set_width((lv_obj_t*)voice_dot[1], 360);
     lv_obj_set_style_text_align((lv_obj_t*)voice_dot[1], LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
