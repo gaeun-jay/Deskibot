@@ -11,13 +11,6 @@ static lv_obj_t *label_minute = nullptr;  // 분
 static lv_obj_t *label_date   = nullptr;
 static lv_timer_t *clock_timer = nullptr;  // 타이머 핸들
 
-// ─── 빌드 시각 기반 소프트 클럭 ─────────────────────────────────────────────
-static uint32_t _base_seconds = 0;
-static uint32_t _base_millis  = 0;
-static int _build_month = 1;
-static int _build_day   = 1;
-static int _build_wday  = 0;  // 0=SUN ... 6=SAT
-
 static const char *const WEEKDAY_NAMES[7] = {
     "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"
 };
@@ -26,62 +19,37 @@ static const char *const MONTH_NAMES[12] = {
     "July", "August", "September", "October", "November", "December"
 };
 
-static int _month_num_from_str(const char *m) {
-    if (!strncmp(m, "Jan", 3)) return 1;
-    if (!strncmp(m, "Feb", 3)) return 2;
-    if (!strncmp(m, "Mar", 3)) return 3;
-    if (!strncmp(m, "Apr", 3)) return 4;
-    if (!strncmp(m, "May", 3)) return 5;
-    if (!strncmp(m, "Jun", 3)) return 6;
-    if (!strncmp(m, "Jul", 3)) return 7;
-    if (!strncmp(m, "Aug", 3)) return 8;
-    if (!strncmp(m, "Sep", 3)) return 9;
-    if (!strncmp(m, "Oct", 3)) return 10;
-    if (!strncmp(m, "Nov", 3)) return 11;
-    return 12;
-}
-
-// Sakamoto's algorithm — 0=Sunday ... 6=Saturday
-static int _day_of_week(int y, int m, int d) {
-    static const int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
-    if (m < 3) y -= 1;
-    return (y + y / 4 - y / 100 + y / 400 + t[m - 1] + d) % 7;
-}
-
-void init_clock() {
-    char mon[4] = {__DATE__[0], __DATE__[1], __DATE__[2], 0};
-    _build_month = _month_num_from_str(mon);
-    _build_day   = atoi(__DATE__ + 4);
-    int build_year = atoi(__DATE__ + 7);
-    _build_wday  = _day_of_week(build_year, _build_month, _build_day);
-    int h = (__TIME__[0]-'0')*10 + (__TIME__[1]-'0');
-    int m = (__TIME__[3]-'0')*10 + (__TIME__[4]-'0');
-    int s = (__TIME__[6]-'0')*10 + (__TIME__[7]-'0');
-    _base_seconds = (uint32_t)h*3600UL + (uint32_t)m*60UL + s;
-    _base_millis  = millis();
-}
-
-static uint32_t now_seconds() {
-    return (_base_seconds + (millis() - _base_millis) / 1000UL) % 86400UL;
-}
-
 // ─── 시계 업데이트 타이머 ────────────────────────────────────────────────────
+// 예전에는 __DATE__/__TIME__(컴파일 시각)에 millis()를 더한 소프트 클럭이라
+// NTP를 전혀 쓰지 않았다. 표시 시각이 "빌드 시각 + 부팅 후 경과"였고 날짜는
+// 빌드 날짜로 고정돼 자정이 지나도 바뀌지 않았다. 이제 실제 시각을 쓴다.
 static void clock_timer_cb(lv_timer_t *timer) {
     if (!label_time || !label_minute || !label_date) return;  // 화면 전환 후 보호
-    uint32_t sec = now_seconds();
-    int hour24   = sec / 3600UL;
-    int minute   = (sec / 60UL) % 60;
+
+    time_t now;
+    time(&now);
+    if (now < 1000000L) {
+        // NTP 미동기화 — 잘못된 시각을 보여주느니 자리표시자를 유지한다.
+        // (WiFi가 붙으면 wifi_loop()이 NTP를 맞추고 다음 틱부터 정상 표시)
+        lv_label_set_text(label_time,   "--");
+        lv_label_set_text(label_minute, "--");
+        lv_label_set_text(label_date,   "-- / --");
+        return;
+    }
+
+    struct tm t;
+    localtime_r(&now, &t);   // configTime(9h)로 KST 기준
 
     // 24시간제, 항상 0 채워서 2자리로 표시
     char hour_buf[4], min_buf[4];
-    snprintf(hour_buf, sizeof(hour_buf), "%02d", hour24);
-    snprintf(min_buf, sizeof(min_buf), "%02d", minute);
+    snprintf(hour_buf, sizeof(hour_buf), "%02d", t.tm_hour);
+    snprintf(min_buf,  sizeof(min_buf),  "%02d", t.tm_min);
     lv_label_set_text(label_time, hour_buf);
     lv_label_set_text(label_minute, min_buf);
 
     char date_buf[32];
     snprintf(date_buf, sizeof(date_buf), "%s, %s %d",
-             WEEKDAY_NAMES[_build_wday], MONTH_NAMES[_build_month - 1], _build_day);
+             WEEKDAY_NAMES[t.tm_wday], MONTH_NAMES[t.tm_mon], t.tm_mday);
     lv_label_set_text(label_date, date_buf);
 }
 

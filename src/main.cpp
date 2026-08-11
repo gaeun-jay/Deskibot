@@ -271,7 +271,6 @@ void setup() {
     Serial.begin(115200);
     Wire.begin(IIC_SDA, IIC_SCL);
 
-    init_clock();
 
     // 1. 디스플레이 먼저 (WiFi/I2S와 독립 하드웨어)
     gfx->begin();
@@ -375,9 +374,10 @@ void loop() {
     rpi_uart_poll();               // RPi 졸음/폰 감지 수신 (UART)
     firebase_check_alerts();       // 위 플래그 → 팝업·경고음
     firebase_check_deadlines();    // todo 마감 알림 (30초 간격)
-    if (current_screen == SCREEN_VOICE) {
-        firebase_fetch_tasks();    // 음성 상태·내부 힙 가드는 firebase_fetch_tasks() 안에 있다
-    }
+    // 화면과 무관하게 주기적으로 가져온다. 음성 화면에서만 부르면 사용자가
+    // 음성 기능을 안 쓸 때 마감 알림이 영영 뜨지 않는다.
+    // 음성 상태·집중 명령·내부 힙 가드는 firebase_fetch_tasks() 안에 있다.
+    firebase_fetch_tasks();
     lv_timer_handler();
     delay(5);
 }
