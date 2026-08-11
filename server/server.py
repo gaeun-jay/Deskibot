@@ -419,6 +419,62 @@ def process():
         return "internal server error", 500
 
 
+@app.route("/todos", methods=["GET"])
+@app.route("/hw/todos", methods=["GET"])
+def todos():
+    """로봇이 오늘 할 일과 마감 알림 대상을 읽어간다(Firestore 폴링 대체).
+
+    인증된 user_id로만 조회하므로 시리얼 `token` 명령으로 사용자를 바꾸면
+    할 일도 함께 바뀐다. 기존 ESP는 FS_USER_ID가 컴파일 상수라 토큰을 바꿔도
+    남의 할 일을 계속 보여줄 수 있었다.
+    """
+    try:
+        user_id = _authenticate_device()
+    except Exception:
+        print("[PostgreSQL] device 인증 조회 실패", flush=True)
+        return "service unavailable", 503
+    if not user_id:
+        return "unauthorized", 401
+
+    today = datetime.now(KST).date()
+    try:
+        with db_pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT content, deadline_time, notify, notify_before_min
+                      FROM todos
+                     WHERE user_id = %s
+                       AND date = %s
+                       AND is_done = false
+                     ORDER BY deadline_time NULLS LAST, id
+                     LIMIT 20
+                    """,
+                    (user_id, today),
+                )
+                rows = cur.fetchall()
+    except Exception:
+        print("[PostgreSQL] todos 조회 실패", flush=True)
+        return "service unavailable", 503
+
+    # ESP 힙이 빠듯하므로 필요한 필드만 담는다. 알림 관련 필드는 notify가 켜져
+    # 있고 마감/사전알림이 모두 있는 항목에만 넣는다(ESP가 그 조합만 사용).
+    items = []
+    for row in rows:
+        item = {"content": row["content"]}
+        if row["notify"] and row["deadline_time"] is not None \
+                and row["notify_before_min"] is not None:
+            item["deadline_time"] = row["deadline_time"].strftime("%H:%M")
+            item["notify_before_min"] = int(row["notify_before_min"])
+        items.append(item)
+
+    print(f"[TODOS] {len(items)}건 응답", flush=True)
+    return Response(
+        json.dumps({"date": today.isoformat(), "todos": items}, ensure_ascii=False),
+        content_type="application/json; charset=utf-8",
+    )
+
+
 @app.route("/health", methods=["GET"])
 def health():
     return "ok"
