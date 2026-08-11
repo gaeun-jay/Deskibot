@@ -46,8 +46,6 @@ ESP32-S3 ── WSS ──► EC2 ──► PostgreSQL (focus_session_events)
 
 ## 3. 변경 내역
 
-백업: `rpi/_backup_pre_firebase_removal/` (수정 전 원본 보관)
-
 | 파일 | 변경 |
 |---|---|
 | `comm/firebase_client.py` | **삭제** |
