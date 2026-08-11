@@ -44,27 +44,27 @@ void show_deadline(const char *time_str, const char *title_str, const char *left
 static bool _last_drowsy = false;
 static bool _last_phone  = false;
 // ─── voice.h extern 전역 ─────────────────────────────────────────────────────
-char fs_task_assignment[128] = {};  // 오늘 미완료 todos 요약 (음성 컨텍스트)
-char fs_task_etc[128]        = {};
-char fs_task_health[128]     = {};
-volatile bool _fs_tasks_ready = false;
+char todo_summary[128] = {};  // 오늘 미완료 todos 요약 (음성 컨텍스트)
+char todo_summary_etc[128]        = {};
+char todo_summary_health[128]     = {};
+volatile bool _todo_summary_ready = false;
 
-// ─── Firestore todos + 카테고리 페치 ─────────────────────────────────────────
-// 집중 세션 WSS가 TLS 세션을 상시 물고 있으므로, Firestore가 두 번째 TLS를 열 때
+// ─── 오늘 할 일 페치 (AWS /hw/todos) ────────────────────────────────────────
+// 집중 세션 WSS가 TLS 세션을 상시 물고 있으므로, 할 일 조회가 두 번째 TLS를 열 때
 // 내부 RAM이 모자라면 esp-aes 할당이 실패하고 핸드셰이크째로 죽는다.
 // AES/SHA 하드웨어 버퍼는 PSRAM을 쓸 수 없어 반드시 내부 힙 기준으로 판단한다.
 // (Todo REST가 AWS로 넘어가면 이 페치 자체가 사라진다)
-#define FS_MIN_FREE_INTERNAL   50000    // 총 여유 내부 힙 하한
-#define FS_MIN_BLOCK_INTERNAL  24000    // 연속 블록 하한 — 단편화 시 총량만으론 부족
-#define FS_FETCH_INTERVAL_MS   60000
-#define FS_BACKOFF_MAX_MS      900000   // 실패가 이어지면 최대 15분까지 간격을 벌린다
+#define TODO_MIN_FREE_INTERNAL   50000    // 총 여유 내부 힙 하한
+#define TODO_MIN_BLOCK_INTERNAL  24000    // 연속 블록 하한 — 단편화 시 총량만으론 부족
+#define TODO_FETCH_INTERVAL_MS   60000
+#define TODO_BACKOFF_MAX_MS      900000   // 실패가 이어지면 최대 15분까지 간격을 벌린다
 
 static uint32_t _tasks_last_fetch = 0;
-static bool     _fs_fetching      = false;
-static uint32_t _fs_retry_ms      = FS_FETCH_INTERVAL_MS;
-static bool     _fs_disabled_boot = false;  // 401/403은 재시도로 안 풀림 → 부팅 동안 포기
+static bool     _todo_fetching      = false;
+static uint32_t _todo_retry_ms      = TODO_FETCH_INTERVAL_MS;
+static bool     _todo_disabled_boot = false;  // 401/403은 재시도로 안 풀림 → 부팅 동안 포기
 
-static void _fs_fetch_task(void *) {
+static void _todo_fetch_task(void *) {
     xSemaphoreTake(_ssl_mutex, portMAX_DELAY);
 
     char device_token[128] = {};
@@ -72,7 +72,7 @@ static void _fs_fetch_task(void *) {
         Serial.println("[Fetch] device_token 미설정 — 건너뜀");
         xSemaphoreGive(_ssl_mutex);
         _tasks_last_fetch = millis();
-        _fs_fetching = false;
+        _todo_fetching = false;
         vTaskDelete(NULL);
         return;
     }
@@ -94,7 +94,7 @@ static void _fs_fetch_task(void *) {
         } else {
             const char *today = doc["date"] | "";
 
-            fs_task_assignment[0] = '\0';
+            todo_summary[0] = '\0';
 
             // 기존 notify shown 상태 보존 (fetch 주기마다 shown이 초기화되면
             // 같은 알림이 반복해서 뜬다)
@@ -108,9 +108,9 @@ static void _fs_fetch_task(void *) {
                 const char *content_val = todo["content"] | (const char *)nullptr;
                 if (!content_val || !content_val[0]) continue;
 
-                if (fs_task_assignment[0])
-                    strlcat(fs_task_assignment, " / ", sizeof(fs_task_assignment));
-                strlcat(fs_task_assignment, content_val, sizeof(fs_task_assignment));
+                if (todo_summary[0])
+                    strlcat(todo_summary, " / ", sizeof(todo_summary));
+                strlcat(todo_summary, content_val, sizeof(todo_summary));
 
                 // 알림 필드는 서버가 notify가 켜진 항목에만 넣어준다.
                 const char *dt = todo["deadline_time"] | (const char *)nullptr;
@@ -133,26 +133,26 @@ static void _fs_fetch_task(void *) {
                 _notify_todos[_notify_todo_count].shown = was_shown;
                 _notify_todo_count++;
             }
-            _fs_tasks_ready = true;
-            _fs_retry_ms = FS_FETCH_INTERVAL_MS;   // 성공 → 백오프 원복
+            _todo_summary_ready = true;
+            _todo_retry_ms = TODO_FETCH_INTERVAL_MS;   // 성공 → 백오프 원복
             Serial.printf("[Fetch] todos(%d건, 알림 %d건): %s\n",
                           (int)doc["todos"].size(), _notify_todo_count,
-                          fs_task_assignment);
+                          todo_summary);
         }
     } else if (code == 401 || code == 403) {
         // 토큰이 틀렸다면 재시도해도 안 풀리고 그때마다 TLS 힙만 갉아먹는다.
         // 토큰을 다시 넣으면 aws_set_device_token()이 이 플래그를 푼다.
-        _fs_disabled_boot = true;
+        _todo_disabled_boot = true;
         Serial.printf("[Fetch] HTTP %d — 인증 거부, 토큰 재설정 전까지 중단\n", code);
     } else {
-        _fs_retry_ms = (_fs_retry_ms >= FS_BACKOFF_MAX_MS / 2)
-                           ? FS_BACKOFF_MAX_MS : _fs_retry_ms * 2;
-        Serial.printf("[Fetch] HTTP %d — %us 후 재시도\n", code, _fs_retry_ms / 1000);
+        _todo_retry_ms = (_todo_retry_ms >= TODO_BACKOFF_MAX_MS / 2)
+                           ? TODO_BACKOFF_MAX_MS : _todo_retry_ms * 2;
+        Serial.printf("[Fetch] HTTP %d — %us 후 재시도\n", code, _todo_retry_ms / 1000);
     }
     http.end();
     xSemaphoreGive(_ssl_mutex);
     _tasks_last_fetch = millis();
-    _fs_fetching = false;
+    _todo_fetching = false;
     vTaskDelete(NULL);
 }
 
@@ -160,42 +160,42 @@ static void _fs_fetch_task(void *) {
 // 마감 알림을 반드시 버려야 한다. 안 그러면 남의 마감 팝업이 그대로 뜬다.
 // 인증 거부로 막아둔 상태도 새 토큰에서는 다시 시도해야 하므로 함께 푼다.
 void todos_reset_for_new_user() {
-    _fs_disabled_boot     = false;
-    _fs_retry_ms          = FS_FETCH_INTERVAL_MS;
+    _todo_disabled_boot     = false;
+    _todo_retry_ms          = TODO_FETCH_INTERVAL_MS;
     _tasks_last_fetch     = 0;
     _notify_todo_count    = 0;
-    _fs_tasks_ready       = false;
-    fs_task_assignment[0] = '\0';
+    _todo_summary_ready       = false;
+    todo_summary[0] = '\0';
 }
 
 // aws_backend.h에서 정의 — 집중 명령 왕복 중에는 두 번째 TLS를 열지 않는다.
 bool aws_focus_command_pending();
 
-void firebase_fetch_tasks() {
-    if (_fs_disabled_boot) return;
+void todo_fetch_tasks() {
+    if (_todo_disabled_boot) return;
     if (WiFi.status() != WL_CONNECTED) return;
-    if (_fs_fetching) return;
-    if (!_ssl_mutex) return;                       // firebase_init() 전 호출 방어
+    if (_todo_fetching) return;
+    if (!_ssl_mutex) return;                       // todo_alert_init() 전 호출 방어
     // 녹음/서버 처리/TTS 재생 중에는 음성 HTTPS가 내부 힙을 이미 점유하고 있다.
     if (_voice_state != VOICE_IDLE) return;
     if (aws_focus_command_pending()) return;       // 집중 상태 왕복이 우선
-    if (_tasks_last_fetch && millis() - _tasks_last_fetch < _fs_retry_ms) return;
+    if (_tasks_last_fetch && millis() - _tasks_last_fetch < _todo_retry_ms) return;
 
     const size_t free_internal =
         heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     const size_t block_internal =
         heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (free_internal < FS_MIN_FREE_INTERNAL || block_internal < FS_MIN_BLOCK_INTERNAL) {
+    if (free_internal < TODO_MIN_FREE_INTERNAL || block_internal < TODO_MIN_BLOCK_INTERNAL) {
         _tasks_last_fetch = millis();              // 다음 주기까지 대기
         Serial.printf("[Fetch] 내부 힙 부족 — 건너뜀 (free=%u block=%u)\n",
                       (unsigned)free_internal, (unsigned)block_internal);
         return;
     }
 
-    _fs_fetching = true;
-    if (xTaskCreatePinnedToCore(_fs_fetch_task, "fs_fetch", 10240, NULL, 1, NULL, 1) != pdPASS) {
+    _todo_fetching = true;
+    if (xTaskCreatePinnedToCore(_todo_fetch_task, "fs_fetch", 10240, NULL, 1, NULL, 1) != pdPASS) {
         // 실패를 삼키면 _fs_fetching이 영구히 true로 남아 페치가 완전히 멎는다.
-        _fs_fetching = false;
+        _todo_fetching = false;
         _tasks_last_fetch = millis();
         Serial.println("[Fetch] fetch 태스크 생성 실패 — 다음 주기 재시도");
     }
@@ -210,7 +210,7 @@ static volatile bool _new_phone      = false;
 extern AppScreen current_screen;
 
 // ─── todo 마감 알림 확인 (메인 루프에서 30초 간격 호출) ─────────────────────
-void firebase_check_deadlines() {
+void todo_check_deadlines() {
     static uint32_t _last_check_ms = 0;
     if (millis() - _last_check_ms < 30000) return;
     _last_check_ms = millis();
@@ -252,15 +252,15 @@ void firebase_check_deadlines() {
     }
 }
 
-// ─── Firestore ToDo REST 초기화 ──────────────────────────────────────────────
-void firebase_init() {
+// ─── 할 일/알림 초기화 ───────────────────────────────────────────────────────
+void todo_alert_init() {
     // WiFi가 나중에 붙어도 페치가 동작해야 하므로 뮤텍스는 무조건 먼저 만든다.
     // (이전에는 부팅 시 WiFi가 없으면 NULL인 채로 남아 fetch 태스크가 죽었다)
     if (!_ssl_mutex) _ssl_mutex = xSemaphoreCreateMutex();
     if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("[Firebase] WiFi 미연결 — 연결 후 페치 재시도"); return;
+        Serial.println("[Todo] WiFi 미연결 — 연결 후 페치 재시도"); return;
     }
-    Serial.println("[Firestore] ToDo REST 초기화 완료");
+    Serial.println("[Todo] 할 일/마감 알림 초기화 완료");
 }
 
 // ─── 졸음/폰 알람 처리 (메인 루프에서 호출) ──────────────────────────────────
@@ -270,7 +270,7 @@ static bool     _alert_sound_active  = false;
 static int      _alert_sound_type    = ALERT_NONE;
 static uint32_t _alert_sound_last_ms = 0;
 
-void firebase_check_alerts() {
+void detection_check_alerts() {
     if (_drowsy_changed) {
         _drowsy_changed = false;
         if (_new_drowsy) {

@@ -246,7 +246,7 @@ void pomo_backend_sync(const char *state, int duration, const char *started_at,
                       duration, (unsigned)elapsed, (unsigned)_pomo_remainSec);
 
     } else if (strcmp(state, "end") == 0 && _pomo_state == POMO_RUNNING) {
-        // 앱이 먼저 종료 → ESP도 종료 (Firestore 기록은 앱이 담당)
+        // 앱이 먼저 종료 → ESP도 종료 (세션 기록은 서버가 담당)
         _pomo_state = POMO_DONE;
         _pomo_update_ui();
         lv_timer_t *rt = lv_timer_create([](lv_timer_t *t) {

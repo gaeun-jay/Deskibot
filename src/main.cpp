@@ -42,14 +42,14 @@ enum AppScreen {
     SCREEN_VOICE,
     SCREEN_STOPWATCH
 };
-AppScreen current_screen = SCREEN_CLOCK;  // extern으로 firebase_handler.h에서 참조
+AppScreen current_screen = SCREEN_CLOCK;  // extern으로 todo_alert_handler.h에서 참조
 
 // ─── WiFi + 백엔드 ───────────────────────────────────────────────────────────
 #include "wifi_handler.h"
-#include "firebase_handler.h"
+#include "todo_alert_handler.h"
 #include "aws_backend.h"
 
-// ─── RPi 감지 링크 (firebase_handler.h의 졸음/폰 플래그를 세움) ───────────────
+// ─── RPi 감지 링크 (todo_alert_handler.h의 졸음/폰 플래그를 세움) ─────────────
 #include "uart_rpi.h"
 
 // ─── 화면 전환 함수 (전방 선언) ──────────────────────────────────────────────
@@ -165,7 +165,7 @@ void switch_screen(AppScreen screen) {
             create_voice_ui();
             clear_scroll_recursive(scr);
             lv_obj_add_event_cb(scr, voice_swipe_cb, LV_EVENT_GESTURE, NULL);
-            firebase_fetch_tasks();  // 화면 진입 시 즉시 태스크 로드 트리거
+            todo_fetch_tasks();  // 화면 진입 시 즉시 태스크 로드 트리거
             Serial.println("[App] → Voice");
             break;
 
@@ -338,7 +338,7 @@ void setup() {
         heap_caps_free
     );
     wifi_init();
-    firebase_init();               // Firestore ToDo REST만 임시 유지
+    todo_alert_init();             // 오늘 할 일·마감 알림 (AWS)
     aws_backend_init();            // 집중 세션 WSS
 
     // RPi 감지 링크 — 졸음/폰은 UART로 들어온다
@@ -372,12 +372,12 @@ void loop() {
     aws_backend_loop();            // WSS 수신/재연결 처리
     aws_focus_sync_ui();           // focus_state → 현재 집중 화면
     rpi_uart_poll();               // RPi 졸음/폰 감지 수신 (UART)
-    firebase_check_alerts();       // 위 플래그 → 팝업·경고음
-    firebase_check_deadlines();    // todo 마감 알림 (30초 간격)
+    detection_check_alerts();       // 위 플래그 → 팝업·경고음
+    todo_check_deadlines();    // todo 마감 알림 (30초 간격)
     // 화면과 무관하게 주기적으로 가져온다. 음성 화면에서만 부르면 사용자가
     // 음성 기능을 안 쓸 때 마감 알림이 영영 뜨지 않는다.
-    // 음성 상태·집중 명령·내부 힙 가드는 firebase_fetch_tasks() 안에 있다.
-    firebase_fetch_tasks();
+    // 음성 상태·집중 명령·내부 힙 가드는 todo_fetch_tasks() 안에 있다.
+    todo_fetch_tasks();
     lv_timer_handler();
     delay(5);
 }

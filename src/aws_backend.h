@@ -82,7 +82,7 @@ static uint32_t _detection_retry_ms = 0;
 bool aws_detection_send(const char *kind, bool active);
 void switch_screen(AppScreen screen);
 
-// "session/status" 같은 슬래시 경로를 따라 내려간다(기존 FirebaseJson 경로 표기 유지).
+// "session/status" 같은 슬래시 경로를 따라 내려간다.
 static JsonVariantConst _aws_json_at(JsonVariantConst root, const char *path) {
     JsonVariantConst node = root;
     const char *p = path;
@@ -361,7 +361,7 @@ bool aws_set_device_token(const char *tok) {
     return true;
 }
 
-// firebase_handler.h가 Firestore TLS를 열기 전에 확인한다 — 집중 상태 왕복 우선.
+// todo_alert_handler.h가 두 번째 TLS를 열기 전에 확인한다 — 집중 상태 왕복 우선.
 bool aws_focus_command_pending() { return _focus_command_pending; }
 
 void aws_backend_loop() {

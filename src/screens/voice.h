@@ -53,11 +53,11 @@ extern "C" {
 }
 #endif
 
-// ─── Firestore 태스크 전역 (firebase_handler.h에서 정의) ─────────────────────
-extern char fs_task_assignment[];
-extern char fs_task_etc[];
-extern char fs_task_health[];
-extern volatile bool _fs_tasks_ready;
+// ─── 오늘 할 일 요약 전역 (todo_alert_handler.h에서 정의) ────────────────────
+extern char todo_summary[];
+extern char todo_summary_etc[];
+extern char todo_summary_health[];
+extern volatile bool _todo_summary_ready;
 
 // ─── 이미지 에셋 선언 (캐릭터 · 마이크 버튼) ─────────────────────────────────
 LV_IMAGE_DECLARE(character_voice);
@@ -374,7 +374,7 @@ static void _send_to_server() {
         free(tbuf);
     }
 
-    // 2. 명령 JSON (서버가 Firestore 처리 후 action 타입을 반환)
+    // 2. 명령 JSON (서버가 PostgreSQL 처리 후 action 타입을 반환)
     uint32_t r_len = 0;
     if (!_read_exact(wifi_stream, (uint8_t *)&r_len, 4)) {
         Serial.println("[Server] ❌ CMD 길이 수신 실패");
@@ -399,10 +399,10 @@ static void _send_to_server() {
         } else if (strcmp(action, "add_todo") == 0 ||
                    strcmp(action, "complete_todo") == 0 ||
                    strcmp(action, "delete_todo") == 0) {
-            // 서버가 Firestore 처리 완료 → pending 클리어
+            // 서버가 할 일 변경 완료 → pending 클리어
             _pending_todo_content[0] = '\0';
             _pending_todo_date[0]    = '\0';
-            Serial.println("[CMD] ✅ Firestore 처리 완료 — pending 클리어");
+            Serial.println("[CMD] ✅ 할 일 처리 완료 — pending 클리어");
         }
         // action == "none" 이거나 get_schedule이면 pending 유지 없이 그냥 패스
 

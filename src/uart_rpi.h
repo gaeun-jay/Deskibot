@@ -52,7 +52,7 @@ const char *rpi_uart_link_str() {
 }
 
 // 메인 루프에서 호출. 한 줄씩 파싱해 _drowsy_changed / _phone_changed 를 세운다.
-// 팝업·경고음은 firebase_check_alerts() 가 그 플래그를 보고 처리하므로 여기선 관여하지 않는다.
+// 팝업·경고음은 detection_check_alerts() 가 그 플래그를 보고 처리하므로 여기선 관여하지 않는다.
 void rpi_uart_poll() {
     static char    buf[32];
     static uint8_t len      = 0;

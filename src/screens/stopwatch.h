@@ -4,7 +4,7 @@
 #include "../iso_time.h"
 #include <time.h>
 
-// ─── 일시정지 이벤트 구조체 (firebase_handler.h의 _build_pause_json에서 사용) ─
+// ─── 일시정지 이벤트 구조체 (로컬 로그용 — 서버가 자체 기록한다) ─────────────
 struct PauseEvent {
     char paused_at[32];   // ISO 8601 — 일시정지 시작
     char resumed_at[32];  // ISO 8601 — 재개 / 종료 시
