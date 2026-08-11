@@ -369,6 +369,7 @@ void loop() {
 
     handle_serial();
     voice_check_state();
+    wifi_loop();                   // WiFi 끊김/부팅 시 미연결 복구 (WS 자동 시작의 전제)
     aws_backend_loop();            // WSS 수신/재연결 처리
     aws_focus_sync_ui();           // focus_state → 현재 집중 화면
     rpi_uart_poll();               // RPi 졸음/폰 감지 수신 (UART)
