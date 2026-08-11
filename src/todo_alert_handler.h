@@ -77,6 +77,12 @@ static void _todo_fetch_task(void *) {
         return;
     }
 
+    // ⚠ vTaskDelete(NULL)은 스택을 되감지 않아 C++ 소멸자를 실행하지 않는다.
+    // WiFiClientSecure/HTTPClient를 함수 스코프에 두면 TLS 컨텍스트가 그대로 남아
+    // 페치 1회마다 내부 힙 약 11KB, 최대 연속 블록 약 14KB가 영구히 사라졌다.
+    // (실측: 55,108/31,732 → 43,488/17,396 → 이후 힙 가드에 걸려 영영 재시도 못 함)
+    // 반드시 아래 스코프를 닫아 소멸자를 돌린 뒤에 태스크를 지운다.
+    {
     WiFiClientSecure sc;
     sc.setCACert(DESKIBOT_ROOT_CA);      // setInsecure() 쓰지 않음
     HTTPClient http;
@@ -150,6 +156,8 @@ static void _todo_fetch_task(void *) {
         Serial.printf("[Fetch] HTTP %d — %us 후 재시도\n", code, _todo_retry_ms / 1000);
     }
     http.end();
+    }   // ← sc / http 소멸자 실행 지점 (vTaskDelete 전에 반드시 닫는다)
+
     xSemaphoreGive(_ssl_mutex);
     _tasks_last_fetch = millis();
     _todo_fetching = false;
