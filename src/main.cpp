@@ -212,8 +212,10 @@ void handle_serial() {
         }
         String tok = input.substring(6);
         tok.trim();
-        if (aws_set_device_token(tok.c_str()))
+        if (aws_set_device_token(tok.c_str())) {
             voice_reset_user_context();
+            todos_reset_for_new_user();   // 이전 사용자의 할 일·마감 알림 폐기
+        }
     } else {
         // 토큰 오타 입력이 평문 로그에 남지 않도록 원문은 출력하지 않는다.
         Serial.println("[App] 알 수 없는 시리얼 명령");

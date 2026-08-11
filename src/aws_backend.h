@@ -2,7 +2,7 @@
 
 #include <Arduino.h>
 #include <WebSocketsClient.h>
-#include <Firebase_ESP_Client.h>
+#include <ArduinoJson.h>
 #include <WiFi.h>
 #include <Preferences.h>
 #include "deskibot_tls.h"
@@ -54,6 +54,7 @@ bool aws_get_device_token(char *out, size_t out_len) {
 }
 
 static WebSocketsClient _deskibot_ws;
+static bool _deskibot_ws_started = false;   // beginSslWithCA를 한 번이라도 걸었는지
 static bool _deskibot_ws_connected = false;
 static bool _deskibot_auth_sent = false;
 static bool _focus_command_pending = false;
@@ -81,35 +82,55 @@ static uint32_t _detection_retry_ms = 0;
 bool aws_detection_send(const char *kind, bool active);
 void switch_screen(AppScreen screen);
 
-static bool _aws_json_string(FirebaseJson &json, const char *path,
+// "session/status" 같은 슬래시 경로를 따라 내려간다(기존 FirebaseJson 경로 표기 유지).
+static JsonVariantConst _aws_json_at(JsonVariantConst root, const char *path) {
+    JsonVariantConst node = root;
+    const char *p = path;
+    char key[40];
+    while (*p && !node.isNull()) {
+        const char *slash = strchr(p, '/');
+        size_t len = slash ? (size_t)(slash - p) : strlen(p);
+        if (len == 0 || len >= sizeof(key)) return JsonVariantConst();
+        memcpy(key, p, len);
+        key[len] = '\0';
+        node = node[key];
+        if (!slash) break;
+        p = slash + 1;
+    }
+    return node;
+}
+
+static bool _aws_json_string(JsonVariantConst root, const char *path,
                              char *out, size_t out_len) {
-    FirebaseJsonData value;
-    if (!json.get(value, path) || !value.success) return false;
-    strlcpy(out, value.stringValue.c_str(), out_len);
+    JsonVariantConst v = _aws_json_at(root, path);
+    if (!v.is<const char *>()) return false;
+    const char *s = v.as<const char *>();
+    if (!s) return false;
+    strlcpy(out, s, out_len);
     return true;
 }
 
-static bool _aws_json_int(FirebaseJson &json, const char *path, int &out) {
-    FirebaseJsonData value;
-    if (!json.get(value, path) || !value.success) return false;
-    out = value.intValue;
+static bool _aws_json_int(JsonVariantConst root, const char *path, int &out) {
+    JsonVariantConst v = _aws_json_at(root, path);
+    if (!v.is<int>()) return false;
+    out = v.as<int>();
     return true;
 }
 
-static bool _aws_json_string_any(FirebaseJson &json,
+static bool _aws_json_string_any(JsonVariantConst root,
                                  const char *const *paths, size_t path_count,
                                  char *out, size_t out_len) {
     for (size_t i = 0; i < path_count; ++i) {
-        if (_aws_json_string(json, paths[i], out, out_len)) return true;
+        if (_aws_json_string(root, paths[i], out, out_len)) return true;
     }
     return false;
 }
 
-static bool _aws_json_int_any(FirebaseJson &json,
+static bool _aws_json_int_any(JsonVariantConst root,
                               const char *const *paths, size_t path_count,
                               int &out) {
     for (size_t i = 0; i < path_count; ++i) {
-        if (_aws_json_int(json, paths[i], out)) return true;
+        if (_aws_json_int(root, paths[i], out)) return true;
     }
     return false;
 }
@@ -137,8 +158,12 @@ static void _aws_send_auth() {
 }
 
 static void _aws_receive_focus_state(const char *payload) {
-    FirebaseJson json;
-    json.setJsonData(payload);
+    JsonDocument doc;
+    if (deserializeJson(doc, payload)) {
+        Serial.println("[AWS WS] focus_state JSON 파싱 실패");
+        return;
+    }
+    JsonVariantConst json = doc.as<JsonVariantConst>();
 
     // ── 서버 계약: deskibot-sw app/focus_service.py::serialize_focus_session ──
     //   {"type":"focus_state","action":"focus_*","changed_by":...,"session":{...}|null}
@@ -184,8 +209,9 @@ static void _aws_receive_focus_state(const char *payload) {
 
     // 활성 세션이 없으면 서버는 session:null을 보낸다 — 오류가 아니라 정상 스냅샷.
     if (!has_session_id) {
-        FirebaseJsonData probe;
-        if (json.get(probe, "session")) {
+        // session이 객체가 아니면(없거나 null) 활성 세션이 없다는 정상 스냅샷이다.
+        // 객체인데 session_id가 없는 경우만 아래 진단 로그로 떨어진다.
+        if (!doc["session"].is<JsonObjectConst>()) {
             Serial.println("[AWS WS] 활성 집중 세션 없음");
             _focus_session_id[0] = '\0';
             _focus_revision = -1;
@@ -241,11 +267,14 @@ static void _aws_ws_event(WStype_t type, uint8_t *payload, size_t length) {
             break;
         case WStype_TEXT: {
             String message((const char *)payload, length);
-            FirebaseJson json;
-            FirebaseJsonData value;
-            json.setJsonData(message);
-            if (json.get(value, "type") && value.success) {
-                const String message_type = value.stringValue;
+            JsonDocument doc;
+            if (deserializeJson(doc, message)) {
+                Serial.println("[AWS WS] 수신 JSON 파싱 실패");
+                break;
+            }
+            const char *type_str = doc["type"].as<const char *>();
+            if (type_str) {
+                const String message_type = type_str;
                 if (message_type == "focus_state") {
                     _aws_receive_focus_state(message.c_str());
                 } else if (message_type == "auth_ok" || message_type == "authenticated") {
@@ -265,6 +294,19 @@ static void _aws_ws_event(WStype_t type, uint8_t *payload, size_t length) {
     }
 }
 
+// 연결 시작. 콜백/재연결 설정은 최초 1회만 등록하고 이후엔 재접속만 건다.
+static void _aws_ws_begin() {
+    _deskibot_ws.beginSslWithCA(DESKIBOT_API_HOST, DESKIBOT_WS_PORT,
+                                DESKIBOT_WS_PATH, DESKIBOT_ROOT_CA);
+    if (!_deskibot_ws_started) {
+        _deskibot_ws.onEvent(_aws_ws_event);
+        _deskibot_ws.setReconnectInterval(5000);
+        _deskibot_ws.enableHeartbeat(15000, 3000, 2);
+        _deskibot_ws_started = true;
+    }
+    Serial.println("[AWS WS] wss://api.deskibot.co.kr/ws/focus 연결 시작");
+}
+
 void aws_backend_init() {
     aws_token_load();   // NVS에서 device_token 로드
     char device_token[sizeof(_device_token)] = {};
@@ -276,15 +318,12 @@ void aws_backend_init() {
     }
 
     if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("[AWS WS] WiFi 미연결 — 초기화 스킵");
+        // 예전에는 여기서 끝나 재부팅 전까지 WS가 영영 초기화되지 않았다.
+        // 로봇이 라우터보다 먼저 켜지면 집중 동기화·감지 이벤트가 통째로 멎는다.
+        Serial.println("[AWS WS] WiFi 미연결 — 연결되면 자동 시작");
         return;
     }
-    _deskibot_ws.beginSslWithCA(DESKIBOT_API_HOST, DESKIBOT_WS_PORT,
-                                DESKIBOT_WS_PATH, DESKIBOT_ROOT_CA);
-    _deskibot_ws.onEvent(_aws_ws_event);
-    _deskibot_ws.setReconnectInterval(5000);
-    _deskibot_ws.enableHeartbeat(15000, 3000, 2);
-    Serial.println("[AWS WS] wss://api.deskibot.co.kr/ws/focus 연결 시작");
+    _aws_ws_begin();
 }
 
 // 시리얼 `token <값>` 명령 처리 — NVS 저장 후 새 유저로 WS 재연결.
@@ -316,10 +355,9 @@ bool aws_set_device_token(const char *tok) {
     _deskibot_auth_sent   = false;
     _deskibot_ws_connected = false;
     _deskibot_ws.disconnect();
-    if (WiFi.status() == WL_CONNECTED) {
-        _deskibot_ws.beginSslWithCA(DESKIBOT_API_HOST, DESKIBOT_WS_PORT,
-                                    DESKIBOT_WS_PATH, DESKIBOT_ROOT_CA);
-    }
+    // _aws_ws_begin()이 콜백 등록까지 챙긴다. 직접 beginSslWithCA만 부르면
+    // WS가 한 번도 시작된 적 없을 때 onEvent가 등록되지 않아 응답을 못 받는다.
+    if (WiFi.status() == WL_CONNECTED) _aws_ws_begin();
     return true;
 }
 
@@ -327,6 +365,16 @@ bool aws_set_device_token(const char *tok) {
 bool aws_focus_command_pending() { return _focus_command_pending; }
 
 void aws_backend_loop() {
+    if (!_deskibot_ws_started) {
+        // 부팅 시 WiFi가 없었던 경우 — 붙는 즉시 시작한다.
+        static uint32_t _ws_start_retry_ms = 0;
+        if (WiFi.status() == WL_CONNECTED &&
+            (_ws_start_retry_ms == 0 || millis() - _ws_start_retry_ms >= 2000)) {
+            _ws_start_retry_ms = millis();
+            _aws_ws_begin();
+        }
+        if (!_deskibot_ws_started) return;
+    }
     _deskibot_ws.loop();
     if (_deskibot_ws_connected && _deskibot_auth_sent &&
         millis() - _detection_retry_ms >= 1000) {
