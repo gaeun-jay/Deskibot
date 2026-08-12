@@ -9,11 +9,10 @@ import cv2
 import mediapipe as mp
 from picamera2 import Picamera2
 
-from detection.drowsy_detect import DrowsyDetector
+from detection.drowsy_detect import DrowsyDetector, draw_faces
 from detection.phone_detect  import PhoneDetector
 from detection.debounce      import Debouncer
 from tracking.pantilt        import PanTilt
-from comm.firebase_client    import FirebaseClient
 from comm.uart_client        import UartClient
 from comm.camera import update_frame, update_status, start_server
 from tracking.pantilt import PanTilt, _is_full_face
@@ -30,6 +29,44 @@ PHONE_RISE_SEC  = 0.0   # Report a phone the moment it is seen
 PHONE_FALL_SEC  = 2.0   # Keep phone state through hand/angle occlusion
 DROWSY_RISE_SEC = 0.0   # Drowsiness is already time-gated inside DrowsyDetector
 DROWSY_FALL_SEC = 2.0   # Ride out momentary face-mesh tracking dropouts
+
+# Short-event filter: a detection must hold this long before it is sent to the ESP.
+# A detection that clears before reaching 10s never goes out over UART, so the
+# server never records it either.
+UART_MIN_HOLD_SEC = 10.0
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def held_long_enough(detected: bool, since: float, filt, mono: float) -> bool:
+    """
+    Report whether a detection has held for at least UART_MIN_HOLD_SEC.
+
+    Args:
+        detected: Current debounced detection state.
+        since:    Monotonic timestamp at which that state became True;
+                  None while it is False.
+        filt:     Debouncer for this channel, used to read when the raw
+                  signal actually stopped.
+        mono:     Monotonic timestamp for this frame.
+
+    Elapsed time is measured up to raw_false_since, not up to mono. The
+    debounced flag already carries the 2s fall delay, so measuring against
+    mono would score a 9-second detection as 11 seconds and let it through.
+    Stopping the clock the instant the raw signal drops is what makes a
+    '9 seconds, then released' detection evaluate as 9 seconds and get filtered.
+
+    When the raw signal blips and comes back (a hand covers the phone, the face
+    mesh drops a frame), the debounced flag stays True and so does `since` —
+    a blip therefore never resets the timer.
+    """
+    if not detected or since is None:
+        return False
+    raw_end = filt.raw_false_since        # None while raw is still True
+    end = mono if raw_end is None else raw_end
+    return (end - since) >= UART_MIN_HOLD_SEC
+
 
 # ---------------------------------------------------------------------------
 # Initialization
@@ -53,7 +90,6 @@ drowsy   = DrowsyDetector()
 phone    = PhoneDetector()
 phone_filter  = Debouncer(PHONE_RISE_SEC,  PHONE_FALL_SEC,  name="phone")
 drowsy_filter = Debouncer(DROWSY_RISE_SEC, DROWSY_FALL_SEC, name="drowsy")
-firebase = FirebaseClient()
 uart     = UartClient()
 start_server()
 
@@ -63,7 +99,10 @@ mp_face_mesh = mp.solutions.face_mesh
 mp_pose      = mp.solutions.pose
 
 face_mesh = mp_face_mesh.FaceMesh(
-    static_image_mode=False, max_num_faces=1,
+    # Accept several faces so select_primary_user() still has a choice when
+    # bystanders are in frame. With max_num_faces=1 MediaPipe returns whichever
+    # face it is most confident about, and primary-user selection never runs.
+    static_image_mode=False, max_num_faces=3,
     refine_landmarks=True,
     min_detection_confidence=0.5, min_tracking_confidence=0.5
 )
@@ -83,8 +122,10 @@ _last_status_print   = 0.0
 _prev_state          = ""
 _phone_was_detected  = False
 _drowsy_was_detected = False
-_prev_drowsy         = False
+_prev_drowsy         = False          # Last value actually sent over UART
 _prev_phone          = False
+_drowsy_since        = None           # Monotonic start of the detection; None once cleared
+_phone_since         = None
 _drowsy_reason       = "DROWSY_EYE"   # Latched cause of the current drowsy episode
 
 # ---------------------------------------------------------------------------
@@ -132,6 +173,10 @@ try:
             last_detections = phone.detect(rgb)
         raw_phone = phone.draw(frame, last_detections, h, w)
 
+        # -- Face boxes ------------------------------------------------------
+        # Primary user gets a green USER box; everyone else a gray 'other' box.
+        draw_faces(frame, face_res, w, h)
+
         # -- State determination --------------------------------------------
         is_drowsy = drowsy_eye or drowsy_face_lost
 
@@ -152,35 +197,52 @@ try:
         else:
             state = "NORMAL" if has_face else ("POSE_ONLY" if has_pose else "NO_PERSON")
 
-        # -- Push detection state on change only ----------------------------
-        if is_drowsy != _prev_drowsy or phone_detected != _prev_phone:
-            firebase.update_detection(drowsy=is_drowsy, phone=phone_detected)
-            uart.update_detection(drowsy=is_drowsy, phone=phone_detected)
-            print(f"[{time.strftime('%H:%M:%S')}] UART → DROWSY:{int(is_drowsy)},PHONE:{int(phone_detected)}")
-            _prev_drowsy = is_drowsy
-            _prev_phone  = phone_detected
+        # -- Minimum-hold gate for UART -------------------------------------
+        # Record when each detection started; only those that reach
+        # UART_MIN_HOLD_SEC are forwarded to the ESP. The on-screen state and
+        # the web stream keep using the ungated values.
+        _drowsy_since = (mono if _drowsy_since is None else _drowsy_since) if is_drowsy      else None
+        _phone_since  = (mono if _phone_since  is None else _phone_since)  if phone_detected else None
 
-        # -- Firebase: phone event logging ----------------------------------
+        uart_drowsy = held_long_enough(is_drowsy,      _drowsy_since, drowsy_filter, mono)
+        uart_phone  = held_long_enough(phone_detected, _phone_since,  phone_filter,  mono)
+
+        # -- Push detection state on change only ----------------------------
+        # The ESP32 is the only uplink. It holds the focus session (session_id)
+        # and the device token, so it is the only side that can attach a
+        # detection event to the server. The RPi reports nothing but "detected
+        # right now / not detected"; timestamps and durations are the server's job.
+        if uart_drowsy != _prev_drowsy or uart_phone != _prev_phone:
+            uart.update_detection(drowsy=uart_drowsy, phone=uart_phone)
+            print(f"[{time.strftime('%H:%M:%S')}] UART → DROWSY:{int(uart_drowsy)},PHONE:{int(uart_phone)}")
+            _prev_drowsy = uart_drowsy
+            _prev_phone  = uart_phone
+
+        # -- Event logging (console only) ------------------------------------
+        # The server owns event recording; these are human-readable logs only.
+        # On release we also print how long ago the signal really stopped,
+        # because the debounce fall delay makes the UART 0 arrive FALL_SEC after
+        # the true end. The server stamps ended_at on arrival, so every recorded
+        # duration carries that constant bias.
+        # (Subtract FALL_SEC from duration_sec during analysis to recover the
+        #  real value.)
         if phone_detected and not _phone_was_detected:
             _phone_was_detected = True
             print(f"[{time.strftime('%H:%M:%S')}] Phone detected")
-            firebase.on_phone_start()
         elif not phone_detected and _phone_was_detected:
             _phone_was_detected = False
-            print(f"[{time.strftime('%H:%M:%S')}] Phone cleared")
-            # Report when the raw signal actually stopped, not when the
-            # debounce filter released, so the logged duration is honest.
-            firebase.on_phone_end(phone_filter.raw_false_since)
+            lag = mono - phone_filter.raw_false_since if phone_filter.raw_false_since else 0.0
+            print(f"[{time.strftime('%H:%M:%S')}] Phone cleared "
+                  f"(really ended {lag:.1f}s ago)")
 
-        # -- Firebase: drowsy event logging ---------------------------------
         if is_drowsy and not _drowsy_was_detected:
             _drowsy_was_detected = True
             print(f"[{time.strftime('%H:%M:%S')}] Drowsiness detected")
-            firebase.on_drowsy_start()
         elif not is_drowsy and _drowsy_was_detected:
             _drowsy_was_detected = False
-            print(f"[{time.strftime('%H:%M:%S')}] Drowsiness cleared")
-            firebase.on_drowsy_end(drowsy_filter.raw_false_since)
+            lag = mono - drowsy_filter.raw_false_since if drowsy_filter.raw_false_since else 0.0
+            print(f"[{time.strftime('%H:%M:%S')}] Drowsiness cleared "
+                  f"(really ended {lag:.1f}s ago)")
 
         # -- State transition log -------------------------------------------
         if state != _prev_state:

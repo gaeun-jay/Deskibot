@@ -16,6 +16,8 @@ lying within the inner 90% of the frame on both axes.
 import RPi.GPIO as GPIO
 import mediapipe as mp
 
+from detection.drowsy_detect import select_primary_user
+
 # ---------------------------------------------------------------------------
 # GPIO pin assignment
 # ---------------------------------------------------------------------------
@@ -54,25 +56,30 @@ def _is_full_face(face_res, frame_w, frame_h) -> tuple:
    
     """
     Check whether all key facial landmarks are fully within the frame.
- 
+
     A face is considered 'full' when all 5 landmarks lie within
     the inner 90% of the frame (5%–95% on both axes).
- 
+
+    Since several faces may be detected, the check runs on the primary user
+    chosen by select_primary_user(). It must be the same face used for
+    drowsiness detection and the on-screen USER box — indexing [0] as before
+    makes the motors track a different person.
+
     Args:
         face_res: MediaPipe FaceMesh result
         frame_w:  Frame width in pixels
         frame_h:  Frame height in pixels
- 
+
     Returns:
         (is_full, face_cx, face_cy)
         face_cx / face_cy are pixel coordinates of the face centroid,
         or None if the face is not full.
     """
-    
+
     if not face_res or not face_res.multi_face_landmarks:
         return False, None, None
 
-    lms = face_res.multi_face_landmarks[0].landmark
+    lms = select_primary_user(face_res.multi_face_landmarks, frame_w, frame_h).landmark
 
     for idx in FACE_FULL_LANDMARKS:
         lm = lms[idx]

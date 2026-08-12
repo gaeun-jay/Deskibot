@@ -55,7 +55,7 @@ HTML = """
         </div>
     </div>
     <script>
-        // 상태만 0.5초마다 fetch로 업데이트
+        // Refresh only the status block every 0.5s via fetch
         function updateStatus() {
             fetch('/status')
                 .then(r => r.json())

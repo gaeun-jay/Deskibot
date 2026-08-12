@@ -8,9 +8,10 @@ Detection conditions:
   2. DROWSY_FACE_LOST — Face disappears while pose (upper body) is still visible
                         for FACE_LOST_SEC seconds (head-drop heuristic)
  
-Multi-face handling: when multiple faces are detected, the one closest to the
-frame center is selected as the primary user.
+Multi-face handling: the largest face is selected as the primary user, with
+hysteresis so the choice does not flip between people. See select_primary_user().
 """
+import cv2
 import numpy as np
 import mediapipe as mp
 
@@ -68,21 +69,149 @@ def pose_present(pose_lms):
     return (lms[POSE_L_SHOULDER].visibility > MIN_POSE_VIS or
             lms[POSE_R_SHOULDER].visibility > MIN_POSE_VIS)
 
+# ---------------------------------------------------------------------------
+# Primary user selection
+# ---------------------------------------------------------------------------
+PRIMARY_KEEP_RATIO = 0.70   # Min size ratio to keep the incumbent primary (by face height)
+PRIMARY_MATCH_DIST = 0.25   # Max distance to treat a face as the same person (normalized)
+
+# Face center of the primary user picked on the previous frame (normalized
+# coords). MediaPipe builds fresh landmark objects every frame, so object
+# identity cannot tell us whether it is the same person — we match by position.
+_last_primary_center = None
+
+
 def select_primary_user(multi_face_landmarks, w, h):
-   
+
     """
-    Select the face closest to the frame center when multiple faces are detected.
-    Assumes the primary user is typically centered in frame.
+    Pick the primary user when several faces are detected: the largest face.
+
+    Why size:
+      On a desk robot the user sits 40–70cm away while passers-by are 1.5m or
+      more back, so their face areas differ several-fold. Picking by 'closest
+      to frame center' instead creates a feedback loop with the pan-tilt — the
+      moment tracking hands over to someone else, the motors pull that person
+      to the center, which locks the choice in and never recovers the original
+      user. Face size does not change with where the motors point, so it has
+      no such loop.
+
+    Hysteresis:
+      The previous primary is kept as long as it is still visible and at least
+      PRIMARY_KEEP_RATIO of the largest face. That way a brief lean toward the
+      camera by someone else does not steal the role unless they become clearly
+      larger, and it also stops the per-frame flip-flopping that happens when
+      two faces are of similar size.
+
+    Args:
+        multi_face_landmarks: Face list returned by FaceMesh (at least one)
+        w, h: Frame size. Sizes and distances are computed in normalized
+              coordinates, so the result is resolution-independent.
+
+    Returns:
+        The face chosen as primary user (an element of multi_face_landmarks)
     """
-    
-    frame_cx, frame_cy = w / 2, h / 2
-    def face_center_dist(face_lms):
-        xs = [lm.x * w for lm in face_lms.landmark]
-        ys = [lm.y * h for lm in face_lms.landmark]
+
+    global _last_primary_center
+
+    # (face, center_x, center_y, face_height, squared distance to frame center)
+    # — all in normalized coordinates. Size is measured as height rather than
+    # area for two reasons:
+    #   - Area is quadratic, so a 20% narrower face shrinks 36% and makes the
+    #     threshold far too twitchy
+    #   - Turning the head sideways cuts the width sharply while the height
+    #     barely changes
+    faces = []
+    for face_lms in multi_face_landmarks:
+        xs = [lm.x for lm in face_lms.landmark]
+        ys = [lm.y for lm in face_lms.landmark]
         cx = sum(xs) / len(xs)
         cy = sum(ys) / len(ys)
-        return (cx - frame_cx) ** 2 + (cy - frame_cy) ** 2
-    return min(multi_face_landmarks, key=face_center_dist)
+        size = max(ys) - min(ys)
+        faces.append((face_lms, cx, cy, size, (cx - 0.5) ** 2 + (cy - 0.5) ** 2))
+
+    # Default choice: the largest face; ties broken by closeness to the center.
+    chosen = max(faces, key=lambda f: (f[3], -f[4]))
+
+    # Hysteresis: keep the incumbent primary while it is still large enough.
+    if _last_primary_center is not None:
+        px, py = _last_primary_center
+        incumbent = min(faces, key=lambda f: (f[1] - px) ** 2 + (f[2] - py) ** 2)
+        moved = ((incumbent[1] - px) ** 2 + (incumbent[2] - py) ** 2) ** 0.5
+        if moved <= PRIMARY_MATCH_DIST and incumbent[3] >= PRIMARY_KEEP_RATIO * chosen[3]:
+            chosen = incumbent
+
+    # Updated so that repeated calls within one frame (drowsiness check,
+    # pan-tilt, box drawing) return the same result for the same input — the
+    # conditions above are already satisfied on re-entry, so this is idempotent.
+    _last_primary_center = (chosen[1], chosen[2])
+    return chosen[0]
+
+
+# ---------------------------------------------------------------------------
+# Visualization
+# ---------------------------------------------------------------------------
+PRIMARY_BOX_COLOR = (0, 220, 0)        # Primary user — green (BGR)
+OTHER_BOX_COLOR   = (150, 150, 150)    # Everyone else — gray
+BOX_PAD_RATIO     = 0.12               # Box padding relative to landmark extent
+
+
+def face_bbox(face_lms, w, h) -> tuple:
+    """Return the pixel rect (x1, y1, x2, y2) enclosing all face landmarks."""
+    xs = [lm.x * w for lm in face_lms.landmark]
+    ys = [lm.y * h for lm in face_lms.landmark]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def draw_faces(frame, face_res, w, h) -> None:
+
+    """
+    Draw boxes on detected faces, in the same style as the phone detection boxes.
+
+    The primary user (the face select_primary_user() picked) gets a thick green
+    box labeled USER; everyone else gets a thin gray one. This makes it visible
+    at a glance which person the robot considers the primary user when others
+    are in frame.
+
+    It calls the same select_primary_user() used for detection, so the green box
+    on screen always matches the face that drowsiness detection and pan-tilt
+    tracking are actually working on.
+
+    Args:
+        frame:    BGR frame (modified in-place)
+        face_res: MediaPipe FaceMesh result
+        w, h:     Frame width and height
+    """
+
+    if not face_res or not face_res.multi_face_landmarks:
+        return
+
+    primary = select_primary_user(face_res.multi_face_landmarks, w, h)
+
+    for face_lms in face_res.multi_face_landmarks:
+        x1, y1, x2, y2 = face_bbox(face_lms, w, h)
+
+        # Landmarks only reach the face outline, so pad the box to keep the
+        # forehead and chin from being cut off.
+        pad = (y2 - y1) * BOX_PAD_RATIO
+        x1 = max(0, int(x1 - pad))
+        y1 = max(0, int(y1 - pad))
+        x2 = min(w, int(x2 + pad))
+        y2 = min(h, int(y2 + pad))
+
+        if face_lms is primary:
+            text, color, thick, scale = "USER", PRIMARY_BOX_COLOR, 3, 0.65
+        else:
+            text, color, thick, scale = "other", OTHER_BOX_COLOR, 1, 0.45
+
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, thick)
+
+        # Push the label down when the face sits against the top of the frame,
+        # otherwise it gets clipped.
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
+        ty = max(y1, th + 8)
+        cv2.rectangle(frame, (x1, ty - th - 8), (x1 + tw + 6, ty), color, -1)
+        cv2.putText(frame, text, (x1 + 3, ty - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), 2)
 
 
 # ---------------------------------------------------------------------------

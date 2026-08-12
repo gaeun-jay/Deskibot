@@ -5,8 +5,8 @@ Time-based debounce filter for noisy boolean detection signals.
 
 Detectors can drop out for a frame or two (a hand passes over the phone, the
 face mesh loses tracking briefly). Feeding those raw flags straight into the
-state machine causes rapid true/false chatter, which in turn spams Firebase
-and UART with meaningless transitions.
+state machine causes rapid true/false chatter, which in turn spams the
+UART link with meaningless transitions.
 
 Debouncer holds the confirmed value until the raw signal has been stable for a
 configured duration, using separate rise and fall delays:
