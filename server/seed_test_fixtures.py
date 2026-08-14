@@ -156,13 +156,17 @@ def seed(apply: bool) -> dict[str, int | bool]:
                     user_ids,
                 )
 
+            # '기타'는 모든 계정의 필수 카테고리다. 음성으로 할 일을 추가할 때
+            # 분류가 애매하면 여기로 들어가므로 계정마다 반드시 하나 있어야 한다.
             category_rows = [
                 (stable_uuid("student-category-study"), student_id, "학업", "#3B82F6", 0),
                 (stable_uuid("student-category-schedule"), student_id, "일정", "#8B5CF6", 1),
                 (stable_uuid("student-category-health"), student_id, "건강", "#10B981", 2),
+                (stable_uuid("student-category-etc"), student_id, "기타", "#6B7280", 99),
                 (stable_uuid("worker-category-work"), worker_id, "업무", "#2563EB", 0),
                 (stable_uuid("worker-category-meeting"), worker_id, "회의", "#F59E0B", 1),
                 (stable_uuid("worker-category-personal"), worker_id, "개인", "#14B8A6", 2),
+                (stable_uuid("worker-category-etc"), worker_id, "기타", "#6B7280", 99),
             ]
             cur.executemany(
                 """
@@ -171,23 +175,27 @@ def seed(apply: bool) -> dict[str, int | bool]:
                 """,
                 category_rows,
             )
-            category = {row[2]: row[0] for row in category_rows}
+            # '기타'처럼 두 계정에 같은 이름이 있으므로 (user_id, name)으로 키를 잡는다.
+            # 이름만 쓰면 뒤 사용자의 id가 앞 사용자를 덮어 cross-user 참조가 된다.
+            category = {(row[1], row[2]): row[0] for row in category_rows}
+            student_cat = lambda name: category[(student_id, name)]
+            worker_cat  = lambda name: category[(worker_id, name)]
 
             todo_rows = [
-                (student_id, category["학업"], "수학 과제 제출", today, None, False, None, False),
-                (student_id, category["학업"], "영어 과제 제출", today, time(23, 59), True, 30, False),
-                (student_id, category["일정"], "보고서 제출", today, time(18, 0), False, None, False),
-                (student_id, category["건강"], "저녁 스트레칭", today, time(21, 0), True, 10, False),
-                (student_id, category["학업"], "완료된 독서 기록", today, None, False, None, True),
-                (student_id, category["학업"], "지난 과제", today - timedelta(days=1), None, False, None, False),
-                (student_id, category["일정"], "내일 수업 준비", today + timedelta(days=1), None, False, None, False),
-                (worker_id, category["업무"], "주간 보고서 제출", today, time(17, 0), True, 30, False),
-                (worker_id, category["업무"], "월간 보고서 제출", today, None, False, None, False),
-                (worker_id, category["업무"], "보고서 제출", today, time(18, 0), False, None, False),
-                (worker_id, category["회의"], "오후 팀 회의", today, time(15, 0), True, 10, False),
-                (worker_id, category["개인"], "완료된 경비 정산", today, None, False, None, True),
-                (worker_id, category["업무"], "지난주 후속 업무", today - timedelta(days=7), None, False, None, False),
-                (worker_id, category["개인"], "내일 병원 예약", today + timedelta(days=1), time(10, 0), True, 60, False),
+                (student_id, student_cat("학업"), "수학 과제 제출", today, None, False, None, False),
+                (student_id, student_cat("학업"), "영어 과제 제출", today, time(23, 59), True, 30, False),
+                (student_id, student_cat("일정"), "보고서 제출", today, time(18, 0), False, None, False),
+                (student_id, student_cat("건강"), "저녁 스트레칭", today, time(21, 0), True, 10, False),
+                (student_id, student_cat("학업"), "완료된 독서 기록", today, None, False, None, True),
+                (student_id, student_cat("학업"), "지난 과제", today - timedelta(days=1), None, False, None, False),
+                (student_id, student_cat("일정"), "내일 수업 준비", today + timedelta(days=1), None, False, None, False),
+                (worker_id, worker_cat("업무"), "주간 보고서 제출", today, time(17, 0), True, 30, False),
+                (worker_id, worker_cat("업무"), "월간 보고서 제출", today, None, False, None, False),
+                (worker_id, worker_cat("업무"), "보고서 제출", today, time(18, 0), False, None, False),
+                (worker_id, worker_cat("회의"), "오후 팀 회의", today, time(15, 0), True, 10, False),
+                (worker_id, worker_cat("개인"), "완료된 경비 정산", today, None, False, None, True),
+                (worker_id, worker_cat("업무"), "지난주 후속 업무", today - timedelta(days=7), None, False, None, False),
+                (worker_id, worker_cat("개인"), "내일 병원 예약", today + timedelta(days=1), time(10, 0), True, 60, False),
             ]
             cur.executemany(
                 """
