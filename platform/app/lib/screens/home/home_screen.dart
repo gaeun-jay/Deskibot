@@ -26,9 +26,6 @@ class _HomeScreenState extends State<HomeScreen> {
   final _contentController = TextEditingController();
   String? _selectedCategoryId;
   DateTime _selectedDate = DateTime.now();
-  bool _noTimeSet = false;
-  TimeOfDay? _selectedStartTime;
-  TimeOfDay? _selectedEndTime;
   TimeOfDay? _selectedDeadlineTime;
   String _notifyOption = '없음';
 
@@ -77,22 +74,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
   }
 
-  Future<void> _pickStartTime() async {
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: _selectedStartTime ?? TimeOfDay.now(),
-    );
-    if (picked != null) setState(() => _selectedStartTime = picked);
-  }
-
-  Future<void> _pickEndTime() async {
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: _selectedEndTime ?? _selectedStartTime ?? TimeOfDay.now(),
-    );
-    if (picked != null) setState(() => _selectedEndTime = picked);
-  }
-
   Future<void> _pickDeadlineTime() async {
     final picked = await showTimePicker(
       context: context,
@@ -118,9 +99,6 @@ class _HomeScreenState extends State<HomeScreen> {
       _editingTodoId = null;
       _selectedCategoryId = null;
       _selectedDate = DateTime.now();
-      _noTimeSet = false;
-      _selectedStartTime = null;
-      _selectedEndTime = null;
       _selectedDeadlineTime = null;
       _notifyOption = '없음';
     });
@@ -138,10 +116,7 @@ class _HomeScreenState extends State<HomeScreen> {
         int.parse(dateParts[1]),
         int.parse(dateParts[2]),
       );
-      _noTimeSet = todo.startTime == null;
-      _selectedStartTime = _parseTime(todo.startTime);
-      _selectedEndTime = _parseTime(todo.endTime);
-      _selectedDeadlineTime = _noTimeSet ? _parseTime(todo.deadlineTime) : null;
+      _selectedDeadlineTime = _parseTime(todo.deadlineTime);
       if (!todo.notify) {
         _notifyOption = '없음';
       } else if (todo.notifyBefore == 30) {
@@ -189,16 +164,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       return;
     }
-    if (!_noTimeSet && (_selectedStartTime == null || _selectedEndTime == null)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('시간을 선택해주세요')),
-      );
-      return;
-    }
-
-    final startTimeStr = _noTimeSet ? null : _timeStr(_selectedStartTime);
-    final endTimeStr = _noTimeSet ? null : _timeStr(_selectedEndTime);
-    final deadlineBase = _noTimeSet ? _selectedDeadlineTime : _selectedEndTime;
+    final deadlineBase = _selectedDeadlineTime;
 
     if (_notifyOption != '없음' && deadlineBase == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -223,8 +189,6 @@ class _HomeScreenState extends State<HomeScreen> {
       content: content,
       categoryId: _selectedCategoryId,
       date: _dateToStr(_selectedDate),
-      startTime: startTimeStr,
-      endTime: endTimeStr,
       notify: notify,
       deadlineTime: deadlineTime,
       notifyBefore: notifyBefore,
@@ -491,34 +455,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Checkbox(
-                value: _noTimeSet,
-                activeColor: const Color(0xFF0069FF),
-                onChanged: (v) => setState(() {
-                  _noTimeSet = v ?? false;
-                  if (_noTimeSet) {
-                    _selectedStartTime = null;
-                    _selectedEndTime = null;
-                  } else {
-                    _selectedDeadlineTime = null;
-                  }
-                }),
-              ),
-              const Text('시간 설정하지 않기',
-                  style: TextStyle(fontSize: 14, color: Colors.black54)),
-            ],
-          ),
-          if (!_noTimeSet) ...[
-            _timeRow('시작 시간', _timeStr(_selectedStartTime), _pickStartTime),
-            const SizedBox(height: 10),
-            _timeRow('종료 시간', _timeStr(_selectedEndTime), _pickEndTime),
-          ],
-          if (_noTimeSet) ...[
-            const SizedBox(height: 4),
-            _timeRow('마감 시간 (선택)', _timeStr(_selectedDeadlineTime), _pickDeadlineTime),
-          ],
+          // 할 일은 체크리스트 형식이라 시작·종료 시각이 없다. 마감만 선택.
+          _timeRow('마감 시간 (선택)', _timeStr(_selectedDeadlineTime),
+              _pickDeadlineTime),
           const SizedBox(height: 12),
           _dateRow(),
           const SizedBox(height: 12),

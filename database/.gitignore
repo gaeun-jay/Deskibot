@@ -1,0 +1,6 @@
+# DB 덤프는 커밋하지 않는다.
+# 전체 사용자 데이터와 password_hash가 들어 있고, 스키마는 아래 .sql 3개로
+# 언제든 재생성할 수 있다.
+deskibot_full_*.sql
+*.dump
+*.backup

@@ -1,162 +1,93 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:uuid/uuid.dart';
 import 'package:deskibot/models/todo_model.dart';
 import 'package:deskibot/models/focus_block_model.dart';
 import 'package:deskibot/models/user_model.dart';
+import 'package:deskibot/services/api_client.dart';
+import 'package:deskibot/services/focus_session_service.dart';
+import 'package:deskibot/services/todo_service.dart';
+import 'package:deskibot/services/user_service.dart';
 
+/// 타임테이블 화면용 조합 서비스.
+/// 실제 저장소 접근은 TodoService / FocusSessionService / UserService 가 한다.
 class TimetableService {
-  final _db = FirebaseFirestore.instance;
-  final _uuid = const Uuid();
-
-  Future<String?> _getUid() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('uid');
-  }
-
-  CollectionReference _todosRef(String uid) =>
-      _db.collection('users').doc(uid).collection('todos');
-
-  CollectionReference _focusRef(String uid) =>
-      _db.collection('users').doc(uid).collection('focus_sessions');
-
   // ── Todo CRUD ─────────────────────────────────────────────────
 
-  Future<List<TodoModel>> getTodosForDate(String date) async {
-    final uid = await _getUid();
-    if (uid == null) return [];
+  Future<List<TodoModel>> getTodosForDate(String date) =>
+      TodoService().getTodosForDate(date);
 
-    final snapshot = await _todosRef(uid)
-        .where('date', isEqualTo: date)
-        .get();
+  Future<void> addTodo(TodoModel todo) => TodoService().addTodo(todo);
 
-    return snapshot.docs
-        .map((doc) => TodoModel.fromMap(doc.id, doc.data() as Map<String, dynamic>))
-        .toList();
-  }
+  Future<void> toggleDone(String todoId, bool isDone) =>
+      TodoService().toggleTodo(todoId, isDone);
 
-  Future<void> addTodo(TodoModel todo) async {
-    final uid = await _getUid();
-    if (uid == null) return;
+  Future<void> updateContent(String todoId, String content) =>
+      TodoService().updateContent(todoId, content);
 
-    final id = _uuid.v4();
-    await _todosRef(uid).doc(id).set({
-      ...todo.toMap(),
-      'created_at': FieldValue.serverTimestamp(),
-    });
-  }
-
-  Future<void> toggleDone(String todoId, bool isDone) async {
-    final uid = await _getUid();
-    if (uid == null) return;
-
-    await _todosRef(uid).doc(todoId).update({'is_done': isDone});
-  }
-
-  Future<void> updateContent(String todoId, String content) async {
-    final uid = await _getUid();
-    if (uid == null) return;
-
-    await _todosRef(uid).doc(todoId).update({'content': content});
-  }
-
-  Future<void> deleteTodo(String todoId) async {
-    final uid = await _getUid();
-    if (uid == null) return;
-
-    await _todosRef(uid).doc(todoId).delete();
-  }
+  Future<void> deleteTodo(String todoId) => TodoService().deleteTodo(todoId);
 
   // ── 집중 세션 조회 ────────────────────────────────────────────
 
+  /// 서버에서 세션을 받아 타임테이블 블록으로 바꾼다.
+  /// 시작·종료 시각이 모두 있는(= 끝난) 세션만 블록으로 그린다.
   Future<List<FocusBlock>> getFocusBlocksForDate(String date) async {
-    final uid = await _getUid();
-    if (uid == null) return [];
+    final res = await ApiClient()
+        .get('/api/focus-sessions', query: {'date': date});
 
-    final snapshot = await _focusRef(uid)
-        .where('date', isEqualTo: date)
-        .get();
+    final blocks = <FocusBlock>[];
 
-    return snapshot.docs
-        .where((doc) {
-          final d = doc.data() as Map<String, dynamic>;
-          final start = d['start_time'] as String?;
-          final end = d['end_time'] as String?;
-          return start != null && start.isNotEmpty && end != null && end.isNotEmpty;
-        })
-        .map((doc) =>
-            FocusBlock.fromMap(doc.id, doc.data() as Map<String, dynamic>))
-        .toList();
-  }
+    for (final raw in (res['sessions'] as List)) {
+      final s = Map<String, dynamic>.from(raw as Map);
+      final start = s['start_time'] as String?;
+      final end = s['end_time'] as String?;
 
-  // ── Todo 시간 수정 ────────────────────────────────────────────
+      if (start == null || end == null) continue;
 
-  Future<void> updateTodoTime(
-    String todoId,
-    String startTime,
-    String? endTime,
-  ) async {
-    final uid = await _getUid();
-    if (uid == null) return;
+      final type = s['type'] as String? ?? 'pomodoro';
 
-    await _todosRef(uid).doc(todoId).update({
-      'start_time': startTime,
-      'end_time': endTime,
-      'deadline_time': endTime,
-    });
+      blocks.add(FocusBlock(
+        id: s['session_id'] as String,
+        date: s['date'] as String? ?? date,
+        startTime: start,
+        endTime: end,
+        sessionType: type,
+        label: (s['title'] as String?) ??
+            (type == 'pomodoro' ? '뽀모도로' : '스톱워치'),
+        // 서버는 초, 타임테이블은 분.
+        durationMin: (((s['actual_duration_sec'] as int? ?? 0)) / 60).round(),
+      ));
+    }
+
+    return blocks;
   }
 
   // ── 집중 세션 제목 수정 ───────────────────────────────────────
 
-  Future<void> updateFocusLabel(String sessionId, String label) async {
-    final uid = await _getUid();
-    if (uid == null) return;
-
-    await _focusRef(uid).doc(sessionId).update({'title': label});
-  }
+  Future<void> updateFocusLabel(String sessionId, String label) =>
+      FocusSessionService().updateTitle(sessionId, label);
 
   // ── 카테고리 조회 ─────────────────────────────────────────────
 
-  Future<Map<String, Category>> getCategories() async {
-    final uid = await _getUid();
-    if (uid == null) return {};
-
-    final doc = await _db.collection('users').doc(uid).get();
-    if (!doc.exists) return {};
-
-    final cats = ((doc.data()!['settings'] as Map<String, dynamic>?)?['categories'] as List<dynamic>?) ?? [];
-    return {
-      for (final c in cats)
-        (c['id'] as String): Category.fromMap(Map<String, dynamic>.from(c as Map)),
-    };
-  }
+  // 카테고리는 서버로 옮겼다. UserService 가 /api/categories 를 부른다.
+  Future<Map<String, Category>> getCategories() =>
+      UserService().getCategoryMap();
 
   // ── 일간 집중 통계 조회 ───────────────────────────────────────
 
+  /// 서버는 초 단위, 화면은 분 단위라 여기서 변환한다.
   Future<Map<String, int>> getDailyStats(String date) async {
-    final uid = await _getUid();
-    if (uid == null) return {};
+    int toMin(dynamic sec) => ((sec as int? ?? 0) / 60).round();
 
     try {
-      final doc = await _db
-          .collection('users')
-          .doc(uid)
-          .collection('stats')
-          .doc('aggregations')
-          .collection('daily')
-          .doc(date)
-          .get();
+      final res = await ApiClient()
+          .get('/api/stats/daily', query: {'date': date});
+      final d = Map<String, dynamic>.from(res as Map);
 
-      if (!doc.exists) return {};
-
-      final d = doc.data()!;
       return {
-        'pomodoro_duration': (d['pomodoro_duration'] as num?)?.toInt() ?? 0,
-        'stopwatch_duration': (d['stopwatch_duration'] as num?)?.toInt() ?? 0,
-        'drowsy_count': (d['drowsy_count'] as num?)?.toInt() ?? 0,
-        'drowsy_duration': (d['drowsy_duration'] as num?)?.toInt() ?? 0,
-        'phone_count': (d['phone_count'] as num?)?.toInt() ?? 0,
-        'phone_duration': (d['phone_duration'] as num?)?.toInt() ?? 0,
+        'pomodoro_duration': toMin(d['pomodoro_duration_sec']),
+        'stopwatch_duration': toMin(d['stopwatch_duration_sec']),
+        'drowsy_count': d['drowsy_count'] as int? ?? 0,
+        'drowsy_duration': toMin(d['drowsy_duration_sec']),
+        'phone_count': d['phone_count'] as int? ?? 0,
+        'phone_duration': toMin(d['phone_duration_sec']),
       };
     } catch (_) {
       return {};

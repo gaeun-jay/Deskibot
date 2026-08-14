@@ -1,6 +1,5 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:deskibot/models/cumulative_stats_model.dart';
-import 'package:deskibot/services/auth_service.dart';
+import 'package:deskibot/services/api_client.dart';
 
 // ISO 주차 ID: "YYYY-Www" (서버와 동일 로직)
 String currentIsoWeekId() => _isoWeekId(DateTime.now());
@@ -13,14 +12,12 @@ String _isoWeekId(DateTime date) {
 }
 
 class CumulativeStatsService {
-  final _db = FirebaseFirestore.instance;
 
   /// periodIndex: 0=1주(7일/7버킷), 1=1달(30일/4버킷), 2=3달(90일/3버킷),
   ///              3=6달(180일/6버킷), 4=1년(365일/4버킷)
   Future<CumulativeStatsModel?> fetchStats(int periodIndex) async {
-    final uid = await AuthService().getCurrentUid();
-    if (uid == null) return null;
-
+    // 사용자 확인은 서버가 토큰으로 한다. 토큰이 없으면 아래에서 401 이
+    // 나고 needsLogin 으로 걸러진다.
     final today = DateTime(
       DateTime.now().year,
       DateTime.now().month,
@@ -30,22 +27,22 @@ class CumulativeStatsService {
     final startStr  = _fmt(startDate);
     final endStr    = _fmt(today);
 
-    // focus_sessions + todos 병렬 읽기
-    final results = await Future.wait([
-      _db.collection('users').doc(uid)
-          .collection('focus_sessions')
-          .where('start_date', isGreaterThanOrEqualTo: startStr)
-          .where('start_date', isLessThanOrEqualTo: endStr)
-          .get(),
-      _db.collection('users').doc(uid)
-          .collection('todos')
-          .where('date', isGreaterThanOrEqualTo: startStr)
-          .where('date', isLessThanOrEqualTo: endStr)
-          .get(),
-    ]);
+    // 서버가 일자별로 이미 집계해 준다. 예전에는 세션·할일 원본 문서를
+    // 통째로 받아 앱에서 셌지만, 이제 /api/stats/range 한 번이면 된다.
+    final Map<String, dynamic> range;
+    try {
+      range = Map<String, dynamic>.from(await ApiClient().get(
+        '/api/stats/range',
+        query: {'start': startStr, 'end': endStr},
+      ) as Map);
+    } on ApiException catch (e) {
+      if (e.needsLogin) return null;
+      rethrow;
+    }
 
-    final sessionsSnap = results[0];
-    final todosSnap    = results[1];
+    final serverDays = (range['days'] as List)
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
 
     final count  = _bucketCount(periodIndex);
     final pomoDur = List<int>.filled(count, 0);
@@ -61,39 +58,36 @@ class CumulativeStatsService {
       'afternoon': SlotStats.empty, 'night': SlotStats.empty,
     });
 
-    for (final doc in sessionsSnap.docs) {
-      final data = doc.data();
-      final dateStr = data['start_date'] as String? ?? '';
-      final b = _bucket(dateStr, periodIndex, today);
+    // 서버는 전부 초 단위. 화면은 분이므로 여기서 변환한다.
+    int toMin(dynamic sec) => ((sec as int? ?? 0) / 60).round();
+
+    for (final day in serverDays) {
+      final b = _bucket(day['date'] as String? ?? '', periodIndex, today);
       if (b == null) continue;
 
-      final type = data['type'] as String? ?? '';
-      final dur  = data['actual_duration'] as int? ?? 0;
-      if (type == 'pomodoro')  pomoDur[b] += dur;
-      if (type == 'stopwatch') swDur[b]   += dur;
+      pomoDur[b] += toMin(day['pomodoro_duration_sec']);
+      swDur[b]   += toMin(day['stopwatch_duration_sec']);
+      dCnt[b]    += day['drowsy_count'] as int? ?? 0;
+      dDur[b]    += toMin(day['drowsy_duration_sec']);
+      pCnt[b]    += day['phone_count'] as int? ?? 0;
+      pDur[b]    += toMin(day['phone_duration_sec']);
+      tTotal[b]  += day['todo_total'] as int? ?? 0;
+      tDone[b]   += day['todo_done'] as int? ?? 0;
 
-      final drowsyEvs = (data['drowsy_events'] as List?) ?? [];
-      final phoneEvs  = (data['phone_events']  as List?) ?? [];
-      dCnt[b] += drowsyEvs.length;
-      dDur[b] += _sumDur(drowsyEvs);
-      pCnt[b] += phoneEvs.length;
-      pDur[b] += _sumDur(phoneEvs);
-
-      final slot = _slotKey(data['start_time'] as String?);
-      final prev = slots[b][slot]!;
-      slots[b][slot] = SlotStats(
-        drowsyCount: prev.drowsyCount + drowsyEvs.length,
-        phoneCount:  prev.phoneCount  + phoneEvs.length,
+      final timeSlots = Map<String, dynamic>.from(
+        (day['time_slots'] as Map?) ?? {},
       );
-    }
 
-    for (final doc in todosSnap.docs) {
-      final data = doc.data();
-      final dateStr = data['date'] as String? ?? '';
-      final b = _bucket(dateStr, periodIndex, today);
-      if (b == null) continue;
-      tTotal[b]++;
-      if (data['is_done'] == true) tDone[b]++;
+      for (final entry in timeSlots.entries) {
+        final v = Map<String, dynamic>.from(entry.value as Map);
+        final prev = slots[b][entry.key];
+        if (prev == null) continue;
+
+        slots[b][entry.key] = SlotStats(
+          drowsyCount: prev.drowsyCount + (v['drowsy_count'] as int? ?? 0),
+          phoneCount:  prev.phoneCount  + (v['phone_count'] as int? ?? 0),
+        );
+      }
     }
 
     final labels = _labels(periodIndex, today);
@@ -123,29 +117,39 @@ class CumulativeStatsService {
   ///
   /// 서버 배치가 수동 트리거라 정확한 갱신 시점을 보장하지 않으므로,
   /// 이번 기간 분석이 아직 없으면 바로 직전 기간 분석으로 대체한다.
+  /// periodIndex → 서버 period_type.
+  /// Node 시절의 '6monthly' 는 스키마 CHECK 에 맞춰 'half_yearly' 가 됐다.
+  static const _periodTypes = [
+    'weekly',
+    'monthly',
+    'quarterly',
+    'half_yearly',
+    'yearly',
+  ];
+
   Future<CumulativeAnalysisModel?> fetchAnalysis(int periodIndex) async {
-    final uid = await AuthService().getCurrentUid();
-    if (uid == null) return null;
+    if (periodIndex < 0 || periodIndex >= _periodTypes.length) return null;
 
-    final now = DateTime.now();
-    final current = _analysisPeriod(periodIndex, now);
-    if (current == null) return null;
+    final label = _analysisPeriod(periodIndex, DateTime.now())?.label ?? '';
+    final periodType = _periodTypes[periodIndex];
 
-    final analysisCol = _db.collection('users').doc(uid).collection('analysis');
+    try {
+      // 서버가 그 기간의 가장 최근 분석을 알아서 돌려준다. 문서 ID 를
+      // 만들어 맞춰보던 로직(이번 기간 없으면 직전 기간)이 필요 없어졌다.
+      final res = await ApiClient()
+          .get('/api/analysis/cumulative/$periodType/latest');
+      final map = Map<String, dynamic>.from(res as Map);
 
-    var doc = await analysisCol.doc(current.id).get();
-    var period = current;
-
-    if (!doc.exists || doc.data()?['type'] != 'cumulative') {
-      final previous = _previousAnalysisPeriod(periodIndex, now);
-      if (previous != null) {
-        doc = await analysisCol.doc(previous.id).get();
-        period = previous;
-      }
+      return CumulativeAnalysisModel.fromMap(
+        '${map['period_start']}~${map['period_end']}',
+        map,
+        periodLabel: label,
+      );
+    } on ApiException catch (e) {
+      // 아직 생성된 분석이 없거나 로그인 전.
+      if (e.statusCode == 404 || e.needsLogin) return null;
+      rethrow;
     }
-
-    if (!doc.exists || doc.data()?['type'] != 'cumulative') return null;
-    return CumulativeAnalysisModel.fromMap(doc.id, doc.data()!, periodLabel: period.label);
   }
 
   /// periodIndex + 기준 날짜 → (문서 id, 화면 표시용 라벨)
@@ -169,21 +173,6 @@ class CumulativeStatsService {
     }
   }
 
-  /// 직전 갱신 주기의 (문서 id, 라벨). 이번 기간 문서가 없을 때의 대체용.
-  ({String id, String label})? _previousAnalysisPeriod(int periodIndex, DateTime now) {
-    switch (periodIndex) {
-      case 0:
-        return _analysisPeriod(0, now.subtract(const Duration(days: 7)));
-      case 1:
-      case 2:
-      case 3:
-        return _analysisPeriod(periodIndex, DateTime(now.year, now.month - 1, 1));
-      case 4:
-        return _analysisPeriod(4, DateTime(now.year, now.month - 3, 1));
-      default:
-        return null;
-    }
-  }
 
   // ── 집계 ─────────────────────────────────────────────────────
 
@@ -278,19 +267,7 @@ class CumulativeStatsService {
     }
   }
 
-  /// HH:MM → 시간대 키
-  String _slotKey(String? startTime) {
-    if (startTime == null) return 'morning';
-    final h = int.tryParse(startTime.split(':')[0]) ?? 9;
-    if (h < 6)  return 'dawn';
-    if (h < 12) return 'morning';
-    if (h < 18) return 'afternoon';
-    return 'night';
-  }
 
-  /// 이벤트 목록의 total_duration 합계
-  int _sumDur(List events) =>
-      events.fold(0, (s, e) => s + ((e as Map)['total_duration'] as int? ?? 0));
 
   String _fmt(DateTime d) =>
       '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';

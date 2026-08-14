@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  로컬 개발 서버에만 평문 HTTP 를 허용한다.
+  그 외 모든 주소는 HTTPS 를 강제하므로, 실수로 운영 서버에 평문으로
+  붙는 일은 생기지 않는다.
+
+  실제 기기로 테스트할 때는 PC 의 LAN IP 를 <domain> 으로 추가할 것.
+  예) <domain includeSubdomains="false">192.168.0.10</domain>
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- 안드로이드 에뮬레이터에서 호스트 PC -->
+        <domain includeSubdomains="false">10.0.2.2</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

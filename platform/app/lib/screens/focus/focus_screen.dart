@@ -4,7 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:deskibot/services/api_client.dart';
 
 import '../../models/timer_state.dart';
 import '../../services/auth_service.dart';
@@ -56,16 +56,16 @@ class _FocusScreenState extends State<FocusScreen>
     final now = DateTime.now();
     final dateStr =
         '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-    final snapshot = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(uid)
-        .collection('focus_sessions')
-        .where('date', isEqualTo: dateStr)
-        .where('status', isEqualTo: 'completed')
-        .get();
+    // 카드가 개수만 쓰므로 서버 응답 맵을 그대로 담는다.
+    final res = await ApiClient()
+        .get('/api/focus-sessions', query: {'date': dateStr});
+    final completed = (res['sessions'] as List)
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .where((s) => s['status'] == 'completed')
+        .toList();
     if (!mounted) return;
     setState(() {
-      _todaySessions = snapshot.docs.map((d) => d.data()).toList();
+      _todaySessions = completed;
     });
   }
 
