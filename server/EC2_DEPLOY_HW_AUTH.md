@@ -15,21 +15,24 @@
 
 ```bash
 cd /Users/gaeun/Documents/PlatformIO/Projects/esp/server
-python3 -m py_compile server.py todo_matching.py register_test_device.py
-python3 -m unittest -v test_todo_matching.py
+python3 -m py_compile server.py todo_matching.py todo_add.py register_test_device.py
+python3 -m unittest -v test_todo_matching test_todo_add
 ```
 
 ## 2. EC2 기존 파일 백업
 
 서비스를 건드리기 전에 EC2에서 백업 디렉터리를 만들고 현재 파일을 보존한다.
+백업 디렉터리는 **배포마다 새 이름**을 쓴다. 같은 이름을 재사용하면 직전 배포의
+롤백 지점이 덮여 사라진다.
 
 ```bash
 ssh deskibot-osaka
 cd /home/ubuntu/Deskibot/server/hw
-mkdir -p backups/pre-pg-todo
-cp -a server.py requirements.txt backups/pre-pg-todo/
-cp -a .env backups/pre-pg-todo/.env
-chmod 600 backups/pre-pg-todo/.env
+BACKUP=backups/pre-voice-add-todo          # 배포 건마다 다른 이름
+mkdir -p "$BACKUP"
+cp -a server.py todo_matching.py requirements.txt "$BACKUP"/
+cp -a .env "$BACKUP"/.env
+chmod 600 "$BACKUP"/.env
 exit
 ```
 
@@ -37,14 +40,18 @@ exit
 
 `.env`와 Firebase 서비스 계정 파일은 덮어쓰거나 삭제하지 않는다.
 
+`todo_add.py`는 `server.py`가 import하는 새 모듈이라 **빠뜨리면 서비스가 기동하지
+않는다.** 반드시 `server.py`와 함께 올린다.
+
 ```bash
 cd /Users/gaeun/Documents/PlatformIO/Projects/esp
 ssh deskibot-osaka 'mkdir -p /tmp/deskibot-hw-pg'
-rsync -av server/server.py server/todo_matching.py server/requirements.txt server/register_test_device.py deskibot-osaka:/tmp/deskibot-hw-pg/
+rsync -av server/server.py server/todo_matching.py server/todo_add.py server/requirements.txt server/register_test_device.py deskibot-osaka:/tmp/deskibot-hw-pg/
 ssh deskibot-osaka
 cd /home/ubuntu/Deskibot/server/hw
 install -m 640 /tmp/deskibot-hw-pg/server.py server.py
 install -m 640 /tmp/deskibot-hw-pg/todo_matching.py todo_matching.py
+install -m 640 /tmp/deskibot-hw-pg/todo_add.py todo_add.py
 install -m 640 /tmp/deskibot-hw-pg/requirements.txt requirements.txt
 install -m 750 /tmp/deskibot-hw-pg/register_test_device.py register_test_device.py
 ```
@@ -57,7 +64,8 @@ install -m 750 /tmp/deskibot-hw-pg/register_test_device.py register_test_device.
 ```bash
 cd /home/ubuntu/Deskibot/server/hw
 .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m py_compile server.py todo_matching.py register_test_device.py
+.venv/bin/python -m py_compile server.py todo_matching.py todo_add.py register_test_device.py
+.venv/bin/python -c 'import todo_add, todo_matching; print("import ok")'
 sudo awk -F= '/^(DB_HOST|DB_PORT|DB_NAME|DB_USER|DB_PASSWORD)=/ {print $1}' .env
 ```
 
@@ -85,20 +93,41 @@ curl -sS -o /dev/null -w '%{http_code}\n' -X POST -H 'X-Device-Key: invalid-test
 
 예상 결과는 health `ok`, 토큰 없음 `401`, 잘못된 토큰 `401`이다. 올바른 토큰은
 안전한 로컬 입력 방식으로 헤더에 넣고 빈 body를 보내 `400`을 확인한다. 이후 실제
-PCM 요청으로 조회·완료·삭제와 사용자 격리를 검증한다.
+PCM 요청으로 조회·추가·완료·삭제와 사용자 격리를 검증한다.
+
+### 6.1 음성 할 일 추가 확인
+
+로봇에 대고 말한 뒤 `journalctl -u deskibot-hw.service -f`의 `[LLM] 🔧 tool=` 과
+`[PostgreSQL] ✅ todo 추가:` 줄을 본다. 앱 목록에도 같은 항목이 보여야 한다.
+
+| 발화 | 기대 결과 |
+|---|---|
+| "데스키봇, 나 오늘 영어 숙제 있어" | 제목 `영어 숙제`, 카테고리 학업류, **마감 없음 / 알림 없음** |
+| "나 오늘 오후 9시까지 알고리즘 과제 해야해" | 마감 `21:00`, `notify=true`, `notify_before_min=60` |
+| "내일 3시까지 병원 가야 해, 30분 전에 알려줘" | 날짜 내일, 마감 `15:00`, `notify_before_min=30` |
+| 같은 발화를 연달아 두 번 | 두 번째는 "이미 등록되어 있습니다" (중복 방지) |
+
+로봇 화면의 할 일 목록은 `/hw/todos` 60초 폴링으로 갱신되므로 최대 1분 걸린다.
 
 검증 완료 전에는 `.env`의 기존 `DEVICE_API_KEY`, Firebase 항목이나 서비스 계정
 파일을 삭제하지 않는다. 새 런타임은 해당 항목을 읽지 않는다.
 
 ## 7. 롤백
 
+되돌릴 배포의 백업 디렉터리를 지정한다(`ls backups/`로 확인).
+
 ```bash
 cd /home/ubuntu/Deskibot/server/hw
-cp -a backups/pre-pg-todo/server.py server.py
-cp -a backups/pre-pg-todo/requirements.txt requirements.txt
-cp -a backups/pre-pg-todo/.env .env
+BACKUP=backups/pre-voice-add-todo
+cp -a "$BACKUP"/server.py server.py
+cp -a "$BACKUP"/todo_matching.py todo_matching.py
+cp -a "$BACKUP"/requirements.txt requirements.txt
+cp -a "$BACKUP"/.env .env
 chmod 600 .env
 .venv/bin/pip install -r requirements.txt
 sudo systemctl restart deskibot-hw.service
 sudo systemctl status deskibot-hw.service --no-pager
 ```
+
+되돌린 `server.py`는 `todo_add.py`를 import하지 않으므로 남아 있는 `todo_add.py`는
+지우지 않아도 무해하다.
