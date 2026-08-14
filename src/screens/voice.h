@@ -39,7 +39,11 @@ bool aws_get_device_token(char *out, size_t out_len);
 #define DBG_DUMP_SAMPLES       20    // 녹음 완료 후 출력할 샘플 수
 
 // ─── 상태 ────────────────────────────────────────────────────────────────────
-enum VoiceState { VOICE_IDLE, VOICE_RECORDING, VOICE_PROCESSING, VOICE_PLAYING };
+// VOICE_STOPPING은 "녹음 종료를 눌렀고 태스크가 아직 정리 중"인 구간이다.
+// 예전에는 이때 IDLE로 되돌렸는데, loop()의 voice_check_state()가 그 IDLE을 보고
+// 대기 화면(마이크 버튼)을 다시 그려서 "서버 전송 중" 직전에 버튼이 깜빡였다.
+// 상태를 따로 두면 레이아웃이 계속 처리 중으로 남는다.
+enum VoiceState { VOICE_IDLE, VOICE_RECORDING, VOICE_STOPPING, VOICE_PROCESSING, VOICE_PLAYING };
 
 #ifdef __cplusplus
 extern "C" {
@@ -80,6 +84,20 @@ static bool      _wave_running   = false;
 #define VOICE_DOTS_Y           120   // 작은 파도 원을 캐릭터 아래에 배치
 #define VOICE_WAVE_Y_BASE       13
 #define VOICE_WAVE_Y_TOP         1
+
+// 터치 히트 영역 확장(px). 원 4개 컨테이너는 162x52라 손가락으로 맞히기 어려웠다.
+// 녹음 중에는 이 컨테이너 말고 눌리는 게 없으므로(캐릭터·문구는 CLICKABLE 아님)
+// 히트 영역을 화면 대부분으로 넓혀서 아무 데나 눌러도 녹음이 끝나게 한다.
+// 화면 전환 제스처는 can_switch()가 음성 처리 중 이미 막으므로 충돌하지 않는다.
+#define VOICE_STOP_HIT_EXT     200
+#define VOICE_MIC_HIT_EXT       40
+
+// ES7210 아날로그 PGA (REG43/REG44 하위 4비트). 한 스텝이 약 3dB다.
+// 0x05일 때 보통 목소리의 녹음 피크가 1004/32767 ≈ 3%(-30dBFS)까지밖에 안 올라
+// STT 여유가 없었다. 0x0A로 약 +15dB 올려 피크를 15~20%대로 끌어올린다.
+// 더 필요하면 한 스텝씩(+3dB) 올리되, 피크가 80%를 넘으면 클리핑이니 내릴 것.
+// (녹음 로그의 "피크:" 값으로 확인 — 32767이 풀스케일)
+#define ES7210_MIC_PGA        0x0A
 
 // ─── I2S 마이크 핸들 ─────────────────────────────────────────────────────────
 static i2s_chan_handle_t _voice_rx = NULL;
@@ -207,16 +225,16 @@ static void _es7210_init() {
     else
         Serial.println("[ES7210]   ⚠️ 포맷 설정 불일치!");
 
-    // ⑧ MIC1/2 활성화 (6dB — 클리핑 방지)
-    Serial.println("[ES7210] ⑧ MIC1/2 활성화 (18dB)...");
+    // ⑧ MIC1/2 활성화
+    Serial.printf("[ES7210] ⑧ MIC1/2 활성화 (PGA 0x%02X)...\n", ES7210_MIC_PGA);
     _es7210_write(0x4B, 0xFF);
     _es7210_write(0x4C, 0xFF);
     _es7210_update_bit(0x01, 0x0B, 0x00);
     _es7210_write(0x4B, 0x00);
     _es7210_update_bit(0x43, 0x10, 0x10);
-    _es7210_update_bit(0x43, 0x0F, 0x05);  // 18dB
+    _es7210_update_bit(0x43, 0x0F, ES7210_MIC_PGA);
     _es7210_update_bit(0x44, 0x10, 0x10);
-    _es7210_update_bit(0x44, 0x0F, 0x05);  // 18dB
+    _es7210_update_bit(0x44, 0x0F, ES7210_MIC_PGA);
     Serial.printf("[ES7210]   REG43=0x%02X(MIC1 gain) REG44=0x%02X(MIC2 gain)\n",
                   _es7210_read(0x43), _es7210_read(0x44));
     Serial.printf("[ES7210]   REG4B=0x%02X(MIC12 power, 0x00=ON)\n", _es7210_read(0x4B));
@@ -319,7 +337,13 @@ static bool _read_exact(NetworkClient *c, uint8_t *dst, uint32_t n) {
 
 // ─── 서버 전송 → STT/LLM/TTS 수신 ───────────────────────────────────────────
 static void _send_to_server() {
-    _voice_set_status("서버 전송 중...");
+    // 전송·수신을 한 문구로 묶는다. 단계를 나눠 보여줘도 사용자가 할 수 있는 게
+    // 없고, 문구가 바뀌면 오히려 뭔가 잘못된 것처럼 보였다.
+    // (문구를 바꿀 때는 pretendard_medium_25 서브셋에 글자가 있는지 반드시 확인)
+    // 2번째 줄 앞 스페이스 4개는 오타가 아니라 광학 정렬용이다. 끝의 " ⋯"가
+    // 25.9px를 차지해 중앙 계산에 들어가는 바람에 "데스키봇"이 12.9px 오른쪽으로
+    // 치우쳐 보였다. 같은 폭을 왼쪽에 넣어 두 줄의 보이는 글자를 함께 중앙에 둔다.
+    _voice_set_status("데스키봇\n    응답 준비중 ⋯");
     Serial.printf("\n[Server] POST %s (%d bytes, %.1f초)\n",
                   VOICE_SERVER_URL,
                   _rec_bytes, (float)_rec_bytes / (VOICE_SAMPLE_RATE * 2));
@@ -358,7 +382,10 @@ static void _send_to_server() {
 
     int resp_total = http.getSize();
     NetworkClient *wifi_stream = http.getStreamPtr();
-    _voice_set_status("응답 처리 중...");
+    // 2번째 줄 앞 스페이스 4개는 오타가 아니라 광학 정렬용이다. 끝의 " ⋯"가
+    // 25.9px를 차지해 중앙 계산에 들어가는 바람에 "데스키봇"이 12.9px 오른쪽으로
+    // 치우쳐 보였다. 같은 폭을 왼쪽에 넣어 두 줄의 보이는 글자를 함께 중앙에 둔다.
+    _voice_set_status("데스키봇\n    응답 준비중 ⋯");
 
     // 1. STT 결과
     uint32_t t_len = 0;
@@ -416,7 +443,7 @@ static void _send_to_server() {
         http.end(); _rec_bytes = 0; return;
     }
 
-    _voice_set_status("데스키봇이 말하고 있어요");
+    _voice_set_status("데스키봇이\n말하고 있어요");
     uint8_t *dst      = (uint8_t *)_rec_buf;
     uint32_t received = 0, dl = millis() + 20000;
     while (received < audio_len && millis() < dl) {
@@ -430,7 +457,62 @@ static void _send_to_server() {
 
     float dur = (float)_rec_bytes / (VOICE_SAMPLE_RATE * 2);
     Serial.printf("[TTS] %d bytes 수신 (%.1f초)\n", _rec_bytes, dur);
-    _voice_set_status("데스키봇이 말하고 있어요");
+    _voice_set_status("데스키봇이\n말하고 있어요");
+}
+
+// ─── 앞뒤 무음 잘라내기 ──────────────────────────────────────────────────────
+// 대기 시간의 대부분이 업로드다(274KB에 8.6초). 그런데 실제 발화 앞뒤로 붙는
+// 무음이 절반을 넘는 경우가 많다 — 버튼 누르고 말 꺼내기까지, 말 끝내고 버튼
+// 누르기까지. 보낼 구간만 남기면 왕복이 그만큼 짧아진다.
+//
+// 문턱값은 고정하지 않고 전체 피크에 비례시킨다. 마이크 게인(ES7210_MIC_PGA)을
+// 바꿔도 따라가야 하기 때문이다. 앞뒤로 여유를 남겨 첫/끝 음절을 자르지 않는다.
+#define TRIM_WINDOW_SAMPLES   (VOICE_SAMPLE_RATE / 50)      // 20ms 단위로 판정
+#define TRIM_HEAD_MARGIN      (VOICE_SAMPLE_RATE * 3 / 10)  // 발화 앞 300ms 보존
+#define TRIM_TAIL_MARGIN      (VOICE_SAMPLE_RATE / 2)       // 발화 뒤 500ms 보존
+#define TRIM_MIN_SAMPLES      (VOICE_SAMPLE_RATE / 2)       // 0.5초 미만이면 손대지 않음
+#define TRIM_ABS_FLOOR        600                           // 잡음만 있을 때의 하한
+
+static uint32_t _trim_silence(int16_t *buf, uint32_t bytes) {
+    const uint32_t total = bytes / sizeof(int16_t);
+    if (!buf || total < TRIM_MIN_SAMPLES) return bytes;
+
+    int32_t peak = 0;
+    for (uint32_t i = 0; i < total; i++) {
+        int32_t v = abs((int32_t)buf[i]);
+        if (v > peak) peak = v;
+    }
+    const int32_t thr = max((int32_t)TRIM_ABS_FLOOR, peak / 12);
+
+    uint32_t first = UINT32_MAX, last = 0;
+    for (uint32_t s = 0; s + TRIM_WINDOW_SAMPLES <= total; s += TRIM_WINDOW_SAMPLES) {
+        int32_t wpeak = 0;
+        for (uint32_t i = s; i < s + TRIM_WINDOW_SAMPLES; i++) {
+            int32_t v = abs((int32_t)buf[i]);
+            if (v > wpeak) wpeak = v;
+        }
+        if (wpeak >= thr) {
+            if (first == UINT32_MAX) first = s;
+            last = s + TRIM_WINDOW_SAMPLES;
+        }
+    }
+    if (first == UINT32_MAX) {
+        Serial.println("[TRIM] 발화 구간을 못 찾음 — 원본 그대로 전송");
+        return bytes;
+    }
+
+    const uint32_t start = (first > TRIM_HEAD_MARGIN) ? first - TRIM_HEAD_MARGIN : 0;
+    const uint32_t end   = min(total, last + TRIM_TAIL_MARGIN);
+    if (end <= start || (end - start) < TRIM_MIN_SAMPLES) return bytes;
+
+    const uint32_t kept = end - start;
+    if (start > 0) memmove(buf, buf + start, kept * sizeof(int16_t));
+
+    Serial.printf("[TRIM] %.2f초 → %.2f초 (%.0f%% 절감, 문턱 %d/피크 %d)\n",
+                  (float)total / VOICE_SAMPLE_RATE,
+                  (float)kept  / VOICE_SAMPLE_RATE,
+                  100.0f * (total - kept) / total, (int)thr, (int)peak);
+    return kept * sizeof(int16_t);
 }
 
 // ─── 녹음 태스크 ─────────────────────────────────────────────────────────────
@@ -454,7 +536,7 @@ static void _record_task(void *arg) {
     while (_voice_state == VOICE_RECORDING) {
         if (_rec_bytes / sizeof(int16_t) >= max_samples) {
             Serial.println("[REC] 최대 시간 도달 — 자동 종료");
-            _voice_state = VOICE_IDLE;
+            _voice_state = VOICE_STOPPING;
             break;
         }
 
@@ -541,6 +623,8 @@ static void _record_task(void *arg) {
         Serial.printf("[REC]   %3d |     %-8d | %d\n", i, _rec_buf[i] << 8, _rec_buf[i]);
     }
     Serial.println("[REC] ============================\n");
+
+    _rec_bytes = _trim_silence(_rec_buf, _rec_bytes);
 
     // ── 파이프라인: 서버 전송 → STT/LLM/TTS 수신 → 자동 재생 ─────────────────
     if (_rec_bytes > 0 && WiFi.status() == WL_CONNECTED) {
@@ -716,7 +800,7 @@ static void _voice_wave_stop() {
 // ─── 상태별 레이아웃 (LVGL 스레드에서만 호출) ────────────────────────────────
 static void _voice_apply_layout(VoiceState st) {
     bool recording = (st == VOICE_RECORDING);
-    bool busy      = (st == VOICE_PROCESSING || st == VOICE_PLAYING);
+    bool busy      = (st == VOICE_STOPPING || st == VOICE_PROCESSING || st == VOICE_PLAYING);
 
     // 캐릭터: 녹음 중엔 위로 올려 아래 텍스트 자리 확보
     lv_obj_align(voice_char, LV_ALIGN_CENTER, 0,
@@ -795,8 +879,8 @@ static void _voice_btn_mic_cb(lv_event_t *e) {
             return;
         }
         Serial.println("[Voice] ⏹️ 녹음 버튼 눌림 → 녹음 종료");
-        _voice_state = VOICE_IDLE;
-        // 태스크가 IDLE 감지 후 스스로 종료 — 완료 로그는 태스크에서 출력
+        _voice_state = VOICE_STOPPING;
+        // 태스크가 STOPPING 감지 후 스스로 종료 — 완료 로그는 태스크에서 출력
     } else {
         Serial.printf("[Voice] 녹음 버튼 무시 (현재 상태: %d)\n", _voice_state);
     }
@@ -816,9 +900,13 @@ extern "C" void create_voice_ui() {
     lv_obj_set_style_text_font((lv_obj_t*)voice_dot[1], &pretendard_medium_25, LV_PART_MAIN);
     // 2줄 안내라 줄이 붙어 보인다(팝업 메시지는 10px).
     lv_obj_set_style_text_line_space((lv_obj_t*)voice_dot[1], 8, LV_PART_MAIN);
+    // 폭을 360으로 고정해 두면 두 줄 길이가 다를 때 짧은 줄이 크게 치우쳐 보였다
+    // ("데스키봇" / "응답 준비중 ⋯"). 글자 폭에 맞춰 박스를 줄이고 박스 자체를
+    // 화면 중앙에 두면, 줄 길이가 달라도 항상 가운데로 모인다.
     lv_label_set_long_mode((lv_obj_t*)voice_dot[1], LV_LABEL_LONG_WRAP);
-    lv_obj_set_width((lv_obj_t*)voice_dot[1], 360);
+    lv_obj_set_width((lv_obj_t*)voice_dot[1], LV_SIZE_CONTENT);
     lv_obj_set_style_text_align((lv_obj_t*)voice_dot[1], LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_pad_all((lv_obj_t*)voice_dot[1], 0, LV_PART_MAIN);
     lv_obj_align((lv_obj_t*)voice_dot[1], LV_ALIGN_CENTER, 0, VOICE_TEXT_Y_TOP);
 
     // ── 캐릭터 (가운데보다 살짝 위) ──────────────────────────────────────────
@@ -834,6 +922,7 @@ extern "C" void create_voice_ui() {
     lv_image_set_scale(voice_btn_mic, 215);  // 120px -> 약 101px
     lv_obj_align(voice_btn_mic, LV_ALIGN_CENTER, 0, 145);
     lv_obj_add_flag(voice_btn_mic, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(voice_btn_mic, VOICE_MIC_HIT_EXT);
     lv_obj_add_event_cb(voice_btn_mic, _voice_btn_mic_cb, LV_EVENT_CLICKED, NULL);
 
     // ── 파도타기 점 4개 (서버 처리~재생 중 표시, 기본 숨김) ──────────────────
@@ -843,6 +932,7 @@ extern "C" void create_voice_ui() {
     lv_obj_align(voice_dots_cont, LV_ALIGN_CENTER, 0, VOICE_DOTS_Y);
     lv_obj_clear_flag(voice_dots_cont, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(voice_dots_cont, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_ext_click_area(voice_dots_cont, VOICE_STOP_HIT_EXT);
     lv_obj_add_event_cb(voice_dots_cont, _voice_btn_mic_cb, LV_EVENT_CLICKED, NULL);
     for (int i = 0; i < 4; i++) {
         voice_wave[i] = lv_image_create(voice_dots_cont);
