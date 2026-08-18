@@ -34,15 +34,10 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
-  firebase_core: ^4.10.0
-  cloud_firestore: ^6.5.0 # Firestore 읽기/쓰기 패키지
-  uuid: ^4.5.3 #uid 생성시 사용
-  shared_preferences: ^2.5.5 # 로그인 상태 유지할 때 사용
-  firebase_messaging: ^16.3.0 # FCM 푸시 알림 패키지
-  crypto: ^3.0.7
-  glassmorphism: ^3.0.0 # 글래스 효과 패키지
-  http: ^1.2.0 # FastAPI 연결용
-  firebase_database: ^12.4.2
+  shared_preferences: ^2.5.5  # 로그인 상태 (JWT 토큰) 유지
+  glassmorphism: ^3.0.0        # 글래스 효과 패키지
+  http: ^1.2.0                 # FastAPI REST 통신
+  web_socket_channel: ^3.0.2   # FastAPI WebSocket (/ws/focus) 타이머
   provider: ^6.1.5
   wakelock_plus: ^1.3.4
   flutter_ringtone_player: ^4.0.0

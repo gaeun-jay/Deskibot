@@ -24,6 +24,9 @@ class TimetableService {
 
   Future<void> deleteTodo(String todoId) => TodoService().deleteTodo(todoId);
 
+  Future<void> updateDeadlineTime(String todoId, String? deadlineTime) =>
+      TodoService().updateDeadline(todoId, deadlineTime);
+
   // ── 집중 세션 조회 ────────────────────────────────────────────
 
   /// 서버에서 세션을 받아 타임테이블 블록으로 바꾼다.

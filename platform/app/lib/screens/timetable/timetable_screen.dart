@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'dart:math' show min, max;
 import 'package:deskibot/models/todo_model.dart';
 import 'package:deskibot/models/focus_block_model.dart';
 import 'package:deskibot/models/user_model.dart';
@@ -7,24 +8,231 @@ import 'package:deskibot/services/timetable_service.dart';
 import 'package:deskibot/theme/app_styles.dart';
 
 // ── 색상 ─────────────────────────────────────────────────────────────
-const _kMain  = Color(0xFF2881FF);
-// 카테고리에 매칭되는 색이 없을 때만 사용하는 기본값
-const _kDefaultTodoColor = '#4A90D9';
-
+const _kPomoAccent = Color(0xFF1A6FDB);
+const _kPomoBlock  = Color(0xFFE8F1FF);
+const _kPomoText   = Color(0xFF1A4B8A);
+const _kStopAccent = Color(0xFF4DA3FF);
+const _kStopBlock  = Color(0xFFEDF5FF);
+const _kStopText   = Color(0xFF1565C0);
+const _kPauseBg    = Color(0xFFE8EEF8);
+const _kTrackBg    = Color(0xFFF9FAFE);
+const _kTrackBdr   = Color(0xFFE8EEF8);
+const _kHourLine   = Color(0xFFC8D8EF);
+const _kMinLine    = Color(0xFFDCE8F5);
+const _kTimeLabel  = Color(0xFFC7C7CC);
+const _kMain       = Color(0xFF1A6FDB);
+const _kDefaultColor = '#4A90D9';
 
 Color _hexColor(String hex) =>
     Color(int.parse(hex.replaceFirst('#', '0xFF')));
 
-String _minutesToTime(int minutes) {
-  final h = minutes ~/ 60;
-  final m = minutes % 60;
-  return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
+String _minToHM(int m) =>
+    '${(m ~/ 60).toString().padLeft(2, '0')}:${(m % 60).toString().padLeft(2, '0')}';
+
+// 상세 패널용 12시간 형식 (예: "12:00 PM", "1:35 PM")
+String _minTo12H(int m) {
+  final h    = m ~/ 60;
+  final min  = m % 60;
+  final ampm = h < 12 ? 'AM' : 'PM';
+  final h12  = h == 0 ? 12 : (h > 12 ? h - 12 : h);
+  return '$h12:${min.toString().padLeft(2, '0')} $ampm';
 }
 
-// ── 화면 ─────────────────────────────────────────────────────────────
+String _hourLabel(int h) {
+  if (h == 0) return '12AM';
+  if (h < 12) return '${h}AM';
+  if (h == 12) return '12PM';
+  return '${h - 12}PM';
+}
+
+String _fmtDuration(int totalMin) {
+  if (totalMin < 60) return '$totalMin분';
+  final h = totalMin ~/ 60;
+  final m = totalMin % 60;
+  return m > 0 ? '$h시간 $m분' : '$h시간';
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// 세그먼트 (활성 세션 or 일시정지 구간)
+// ══════════════════════════════════════════════════════════════════════
+class _Segment {
+  final bool isActive;
+  final int startMin;
+  final int endMin;
+  final FocusBlock? session; // isActive=true일 때만
+
+  _Segment.active(FocusBlock s)
+      : isActive = true,
+        session = s,
+        startMin = s.startMinutes,
+        endMin = s.endMinutes;
+
+  _Segment.pause({required this.startMin, required this.endMin})
+      : isActive = false,
+        session = null;
+
+  int get durationMin => endMin - startMin;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// 세션 그룹 (9분 이내 병합 + 세그먼트 자동 생성)
+// ══════════════════════════════════════════════════════════════════════
+class _SessionGroup {
+  final List<FocusBlock> sessions;
+  late final List<_Segment> segments;
+
+  _SessionGroup(this.sessions) {
+    final sorted = List<FocusBlock>.from(sessions)
+      ..sort((a, b) => a.startMinutes.compareTo(b.startMinutes));
+    final segs = <_Segment>[];
+    for (int i = 0; i < sorted.length; i++) {
+      if (i > 0) {
+        final prevEnd  = sorted[i - 1].endMinutes;
+        final curStart = sorted[i].startMinutes;
+        if (curStart > prevEnd) {
+          segs.add(_Segment.pause(startMin: prevEnd, endMin: curStart));
+        }
+      }
+      segs.add(_Segment.active(sorted[i]));
+    }
+    segments = segs;
+  }
+
+  int get startMinutes => segments.first.startMin;
+  int get endMinutes   => segments.last.endMin;
+
+  String get sessionType {
+    final t = sessions.map((s) => s.sessionType).toSet();
+    return t.length == 1 ? t.first : 'mixed';
+  }
+
+  String get displayLabel {
+    final typeName = sessionType == 'pomodoro' ? '뽀모도로' : '스톱워치';
+    if (sessions.length == 1) {
+      final lbl = sessions.first.label;
+      const defaults = {'집중 세션', '뽀모도로 세션', '스톱워치 세션', ''};
+      if (defaults.contains(lbl)) return typeName;
+      return lbl;
+    }
+    return typeName;
+  }
+
+  int get totalDuration =>
+      segments.where((s) => s.isActive).fold(0, (sum, s) => sum + s.durationMin);
+
+  String get key => sessions.map((s) => s.id).join('|');
+}
+
+List<_SessionGroup> _mergeSessions(List<FocusBlock> blocks) {
+  if (blocks.isEmpty) return [];
+  blocks.sort((a, b) => a.startMinutes.compareTo(b.startMinutes));
+  final groups = <_SessionGroup>[];
+  var cur = <FocusBlock>[blocks.first];
+  for (int i = 1; i < blocks.length; i++) {
+    final curEnd = cur.map((s) => s.endMinutes).reduce(max);
+    final next = blocks[i];
+    if (next.startMinutes - curEnd <= 9) {
+      cur.add(next);
+    } else {
+      groups.add(_SessionGroup(cur));
+      cur = [next];
+    }
+  }
+  groups.add(_SessionGroup(cur));
+  return groups;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// 압축 타임라인 매퍼
+// ══════════════════════════════════════════════════════════════════════
+class _TSpan {
+  final bool isGap;
+  final int startMin;
+  final int endMin;
+  _TSpan.active(this.startMin, this.endMin) : isGap = false;
+  _TSpan.gap(this.startMin, this.endMin)    : isGap = true;
+}
+
+class _TimelineMapper {
+  static const double hourH = 80.0;
+  static const double gapH  = 30.0;
+
+  final List<_TSpan> spans;
+  _TimelineMapper(this.spans);
+
+  factory _TimelineMapper.fromGroups(
+      List<_SessionGroup> pomo, List<_SessionGroup> stop) {
+    final all = [...pomo, ...stop];
+    if (all.isEmpty) {
+      return _TimelineMapper([
+        _TSpan.gap(0, 9 * 60),
+        _TSpan.active(9 * 60, 18 * 60),
+        _TSpan.gap(18 * 60, 24 * 60),
+      ]);
+    }
+    final ranges = <List<int>>[];
+    for (final g in all) {
+      final s = max(0,       g.startMinutes ~/ 60 - 1) * 60;
+      final e = min(24 * 60, ((g.endMinutes + 59) ~/ 60 + 1) * 60);
+      ranges.add([s, e]);
+    }
+    ranges.sort((a, b) => a[0].compareTo(b[0]));
+    final merged = [ranges.first.toList()];
+    for (int i = 1; i < ranges.length; i++) {
+      if (ranges[i][0] <= merged.last[1]) {
+        merged.last[1] = max(merged.last[1], ranges[i][1]);
+      } else {
+        merged.add(ranges[i].toList());
+      }
+    }
+    final spans = <_TSpan>[];
+    int pos = 0;
+    for (final r in merged) {
+      if (r[0] > pos) spans.add(_TSpan.gap(pos, r[0]));
+      spans.add(_TSpan.active(r[0], r[1]));
+      pos = r[1];
+    }
+    if (pos < 24 * 60) spans.add(_TSpan.gap(pos, 24 * 60));
+    return _TimelineMapper(spans);
+  }
+
+  double get totalHeight {
+    double h = 0;
+    for (final s in spans) {
+      h += s.isGap ? gapH : (s.endMin - s.startMin) * hourH / 60;
+    }
+    return h;
+  }
+
+  double minutesToY(int minutes) {
+    double y = 0;
+    for (final s in spans) {
+      if (minutes <= s.startMin) return y;
+      if (minutes >= s.endMin) {
+        y += s.isGap ? gapH : (s.endMin - s.startMin) * hourH / 60;
+        continue;
+      }
+      if (s.isGap) return y + gapH / 2;
+      return y + (minutes - s.startMin) * hourH / 60;
+    }
+    return y;
+  }
+
+  double spanStartY(_TSpan target) {
+    double y = 0;
+    for (final s in spans) {
+      if (identical(s, target)) return y;
+      y += s.isGap ? gapH : (s.endMin - s.startMin) * hourH / 60;
+    }
+    return y;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// 화면
+// ══════════════════════════════════════════════════════════════════════
 class TimetableScreen extends StatefulWidget {
   const TimetableScreen({super.key});
-
   @override
   State<TimetableScreen> createState() => _TimetableScreenState();
 }
@@ -33,13 +241,25 @@ class _TimetableScreenState extends State<TimetableScreen> {
   final _service = TimetableService();
 
   DateTime _selectedDate = DateTime.now();
-  bool _showFocus = false;
+  int _selectedTab = 0; // 0 = 집중 세션, 1 = Todo
 
-  List<TodoModel> _todos = [];
+  List<TodoModel>  _todos       = [];
   List<FocusBlock> _focusBlocks = [];
   Map<String, Category> _categories = {};
-  bool _isLoading = true;
+  bool _isLoading  = true;
   bool _wasVisible = false;
+
+  // 캐싱된 세션 그룹
+  List<_SessionGroup> _pomoGroups = [];
+  List<_SessionGroup> _stopGroups = [];
+
+  // 상세 패널 상태
+  _SessionGroup? _selectedGroup;
+  String?        _selectedGroupKey;
+  bool           _editMode = false;
+  final Set<String> _selectedIds = {};
+  final _nameCtrl = TextEditingController();
+  bool _isSaving  = false;
 
   @override
   void initState() {
@@ -53,6 +273,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
 
   @override
   void dispose() {
+    _nameCtrl.dispose();
     SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: Brightness.dark,
@@ -63,9 +284,9 @@ class _TimetableScreenState extends State<TimetableScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final isVisible = TickerMode.valuesOf(context).enabled;
-    if (isVisible && !_wasVisible) _loadData();
-    _wasVisible = isVisible;
+    final v = TickerMode.valuesOf(context).enabled;
+    if (v && !_wasVisible) _loadData();
+    _wasVisible = v;
   }
 
   String get _dateKey {
@@ -75,347 +296,345 @@ class _TimetableScreenState extends State<TimetableScreen> {
 
   String get _dateLabel {
     final now = DateTime.now();
-    final isToday = _selectedDate.year == now.year &&
+    final today = _selectedDate.year == now.year &&
         _selectedDate.month == now.month &&
         _selectedDate.day == now.day;
     final s = '${_selectedDate.month}월 ${_selectedDate.day}일';
-    return isToday ? '$s (오늘)' : s;
+    return today ? '$s (오늘)' : s;
   }
 
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
-    final results = await Future.wait([
+    final res = await Future.wait([
       _service.getTodosForDate(_dateKey),
       _service.getFocusBlocksForDate(_dateKey),
       _service.getCategories(),
     ]);
     if (!mounted) return;
+    final blocks = res[1] as List<FocusBlock>;
     setState(() {
-      _todos = results[0] as List<TodoModel>;
-      _focusBlocks = results[1] as List<FocusBlock>;
-      _categories = results[2] as Map<String, Category>;
-      _isLoading = false;
+      _todos       = res[0] as List<TodoModel>;
+      _focusBlocks = blocks;
+      _categories  = res[2] as Map<String, Category>;
+      _pomoGroups  = _computeGroups('pomodoro');
+      _stopGroups  = _computeGroups('stopwatch');
+      _isLoading   = false;
+      // 데이터 갱신 시 선택 상태 초기화
+      _selectedGroup    = null;
+      _selectedGroupKey = null;
+      _editMode         = false;
+      _selectedIds.clear();
     });
   }
 
-  // 할 일은 시작·종료 시각이 없는 체크리스트다. 그리드에는 집중 세션만 그린다.
-  List<TodoModel> get _unscheduled => _todos;
-
-  // ── 블록 레이아웃 계산 ──────────────────────────────────────────────
-  List<_BlockLayout> _buildLayouts() {
-    final layouts = <_BlockLayout>[];
-
-    if (_showFocus) {
-      for (final block in _focusBlocks) {
-        layouts.add(_BlockLayout(
-          id: block.id,
-          title: block.label,
-          startMinutes: block.startMinutes,
-          endMinutes: block.endMinutes,
-          isFocus: true,
-          isDone: false,
-          color: '#4A90D9',
-        ));
-      }
-    }
-
-    _assignColumns(layouts);
-    return layouts;
+  List<_SessionGroup> _computeGroups(String type) {
+    final blocks = _focusBlocks.where((b) => b.sessionType == type).toList();
+    return _mergeSessions(blocks);
   }
 
-  void _assignColumns(List<_BlockLayout> layouts) {
-    layouts.sort((a, b) => a.startMinutes.compareTo(b.startMinutes));
-    final columnEnds = <int>[];
-    for (final l in layouts) {
-      int col = 0;
-      for (; col < columnEnds.length; col++) {
-        if (columnEnds[col] <= l.startMinutes) break;
-      }
-      l.column = col;
-      if (col == columnEnds.length) {
-        columnEnds.add(l.endMinutes);
+  // ── 이벤트 핸들러 ──────────────────────────────────────────────────
+  void _selectGroup(_SessionGroup g) {
+    setState(() {
+      if (_selectedGroupKey == g.key) {
+        // 같은 블록 재탭 → 닫기
+        _selectedGroup    = null;
+        _selectedGroupKey = null;
       } else {
-        columnEnds[col] = l.endMinutes;
+        _selectedGroup    = g;
+        _selectedGroupKey = g.key;
       }
-    }
-    for (final l in layouts) {
-      int maxCol = l.column;
-      for (final o in layouts) {
-        if (identical(o, l)) continue;
-        if (o.startMinutes < l.endMinutes && o.endMinutes > l.startMinutes && o.column > maxCol) {
-          maxCol = o.column;
-        }
-      }
-      l.totalColumns = maxCol + 1;
-    }
+      _editMode = false;
+      _selectedIds.clear();
+      _nameCtrl.clear();
+    });
   }
 
-  // ── 빌드 ───────────────────────────────────────────────────────────
-  @override
-  Widget build(BuildContext context) {
-    final statusBarH = MediaQuery.of(context).padding.top;
-    final headerH = statusBarH + 150.0;
-
-    return Scaffold(
-      backgroundColor: const Color(0xFFF0F4FF),
-      body: Stack(
-        children: [
-          // ── 1) 그라디언트 배경 ───────────────────────────────
-          Positioned.fill(
-            child: Container(
-              decoration: const BoxDecoration(gradient: kAppBackgroundGradient),
-            ),
-          ),
-
-          // ── 2) 캐릭터 (흰 카드 뒤, 왼쪽) ───────────────────
-          Positioned(
-            top: statusBarH + 16,
-            left: 10,
-            child: Image.asset(
-              'assets/images/character_timetable.png',
-              width: 143,
-              height: 143,
-              fit: BoxFit.contain,
-            ),
-          ),
-
-          // ── 3) 헤더 텍스트 (오른쪽) ─────────────────────────
-          Positioned(
-            top: statusBarH + 70,
-            left: 155,
-            right: 16,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
-                Text('Daily Log', style: kHeaderTitleStyle),
-                SizedBox(height: 6),
-                Text(
-                  '하루 일정을 시간대별로 확인하세요.',
-                  style: kHeaderSubtitleStyle,
-                ),
-              ],
-            ),
-          ),
-
-          // ── 5) 콘텐츠 영역 (시간미정 + 토글 + 흰 카드) ──────
-          Positioned(
-            top: headerH,
-            left: 14,
-            right: 14,
-            bottom: 0,
-            child: Column(
-              children: [
-                // 시간 미정 섹션 (하루 일정)
-                if (_unscheduled.isNotEmpty) ...[
-                  _UnscheduledSection(
-                    items: _unscheduled,
-                    categories: _categories,
-                    onToggle: (todo) async {
-                      await _service.toggleDone(todo.id, !todo.isDone);
-                      _loadData();
-                    },
-                    onDelete: (todo) async {
-                      await _service.deleteTodo(todo.id);
-                      _loadData();
-                    },
-                  ),
-                ],
-
-                // 토글 (타임테이블 위 오른쪽)
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: _FocusToggle(
-                    showFocus: _showFocus,
-                    onChanged: (v) => setState(() => _showFocus = v),
-                  ),
-                ),
-
-                // 흰 카드 (타임 그리드)
-                Expanded(
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(24),
-                        topRight: Radius.circular(24),
-                      ),
-                      border: Border.all(color: const Color(0xFFD1D1D1)),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x18000000),
-                          blurRadius: 12,
-                          offset: Offset(0, -4),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        // 날짜 네비게이션
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.chevron_left, size: 22),
-                                onPressed: () {
-                                  setState(() => _selectedDate =
-                                      _selectedDate.subtract(const Duration(days: 1)));
-                                  _loadData();
-                                },
-                                padding: EdgeInsets.zero,
-                                visualDensity: VisualDensity.compact,
-                              ),
-                              Text(
-                                _dateLabel,
-                                style: const TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w700,
-                                  color: Color(0xFF1E1E1E),
-                                ),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.chevron_right, size: 22),
-                                onPressed: () {
-                                  setState(() => _selectedDate =
-                                      _selectedDate.add(const Duration(days: 1)));
-                                  _loadData();
-                                },
-                                padding: EdgeInsets.zero,
-                                visualDensity: VisualDensity.compact,
-                              ),
-                            ],
-                          ),
-                        ),
-
-                        // 타임 그리드
-                        Expanded(
-                          child: _isLoading
-                              ? const Center(
-                                  child: CircularProgressIndicator(color: _kMain))
-                              : _TimeGrid(
-                                  layouts: _buildLayouts(),
-                                  onFocusTap: _showEditFocusLabelSheet,
-                                  onTodoTap: _showTodoOptionsSheet,
-                                ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
+  void _closeDetail() {
+    setState(() {
+      _selectedGroup    = null;
+      _selectedGroupKey = null;
+      _editMode         = false;
+      _selectedIds.clear();
+      _nameCtrl.clear();
+    });
   }
 
-  void _showEditFocusLabelSheet(String sessionId, String currentLabel) {
-    final ctrl = TextEditingController(text: currentLabel);
+  void _enterEditMode() {
+    setState(() {
+      _editMode = true;
+      _selectedIds.clear();
+      _nameCtrl.clear();
+    });
+  }
+
+  void _cancelEdit() {
+    setState(() {
+      _editMode = false;
+      _selectedIds.clear();
+      _nameCtrl.clear();
+    });
+  }
+
+  void _toggleSession(String id) {
+    setState(() {
+      if (_selectedIds.contains(id)) {
+        _selectedIds.remove(id);
+      } else {
+        _selectedIds.add(id);
+      }
+    });
+  }
+
+  Future<void> _applyName() async {
+    final label = _nameCtrl.text.trim();
+    if (label.isEmpty || _selectedIds.isEmpty) return;
+    setState(() => _isSaving = true);
+    await Future.wait(
+        _selectedIds.map((id) => _service.updateFocusLabel(id, label)));
+    if (!mounted) return;
+    setState(() => _isSaving = false);
+    _cancelEdit();
+    _loadData();
+  }
+
+  void _showDeadlineSheet(TodoModel todo) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => Padding(
-        padding: EdgeInsets.only(
-          left: 20, right: 20, top: 24,
-          bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40, height: 4,
-                margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFDDDDDD),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const Text('집중 세션 이름 수정',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            TextField(
-              controller: ctrl,
-              autofocus: true,
-              decoration: InputDecoration(
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10)),
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              ),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () async {
-                  final label = ctrl.text.trim();
-                  if (label.isEmpty) return;
-                  await _service.updateFocusLabel(sessionId, label);
-                  if (!mounted) return;
-                  Navigator.pop(context);
-                  _loadData();
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _kMain,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10)),
-                ),
-                child: const Text('저장',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-              ),
-            ),
-          ],
-        ),
-      ),
+      builder: (_) =>
+          _DeadlineSheet(todo: todo, service: _service, onSaved: _loadData),
     );
   }
 
-  void _showTodoOptionsSheet(String todoId, String title) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-      builder: (_) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40, height: 4,
-              margin: const EdgeInsets.symmetric(vertical: 12),
+  // ── 빌드 ───────────────────────────────────────────────────────────
+  @override
+  Widget build(BuildContext context) {
+    final sbH    = MediaQuery.of(context).padding.top;
+    final headerH = sbH + 150.0;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF0F4FF),
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: Container(
+              decoration: const BoxDecoration(gradient: kAppBackgroundGradient),
+            ),
+          ),
+          Positioned(
+            top: sbH + 16, left: 10,
+            child: Image.asset('assets/images/character_timetable.png',
+                width: 143, height: 143, fit: BoxFit.contain),
+          ),
+          Positioned(
+            top: sbH + 70, left: 155, right: 16,
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Daily Log', style: kHeaderTitleStyle),
+                SizedBox(height: 6),
+                Text('하루 일정을 시간대별로 확인하세요.',
+                    style: kHeaderSubtitleStyle),
+              ],
+            ),
+          ),
+          Positioned(
+            top: headerH, left: 14, right: 14, bottom: 0,
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 4),
               decoration: BoxDecoration(
-                color: const Color(0xFFDDDDDD),
-                borderRadius: BorderRadius.circular(2),
+                color: Colors.white,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(24),
+                  topRight: Radius.circular(24),
+                ),
+                border: Border.all(color: const Color(0xFFD1D1D1)),
+                boxShadow: const [
+                  BoxShadow(
+                      color: Color(0x18000000),
+                      blurRadius: 12,
+                      offset: Offset(0, -4)),
+                ],
+              ),
+              child: Column(
+                children: [
+                  // 날짜 네비게이션
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 12, 8, 0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.chevron_left, size: 22),
+                          onPressed: () {
+                            setState(() => _selectedDate =
+                                _selectedDate.subtract(const Duration(days: 1)));
+                            _loadData();
+                          },
+                          padding: EdgeInsets.zero,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        Text(_dateLabel,
+                            style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF1E1E1E))),
+                        IconButton(
+                          icon: const Icon(Icons.chevron_right, size: 22),
+                          onPressed: () {
+                            setState(() => _selectedDate =
+                                _selectedDate.add(const Duration(days: 1)));
+                            _loadData();
+                          },
+                          padding: EdgeInsets.zero,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ],
+                    ),
+                  ),
+                  // 탭 전환
+                  _TabSwitcher(
+                    selectedIndex: _selectedTab,
+                    onChanged: (i) => setState(() {
+                      _selectedTab = i;
+                      _closeDetail();
+                    }),
+                    labels: const ['집중 세션', 'Todo'],
+                  ),
+                  // 콘텐츠
+                  Expanded(
+                    child: _isLoading
+                        ? const Center(
+                            child: CircularProgressIndicator(color: _kMain))
+                        : _selectedTab == 0
+                            ? _buildFocusTab()
+                            : _TodoListSection(
+                                todos: _todos,
+                                categories: _categories,
+                                onToggle: (t) async {
+                                  await _service.toggleDone(t.id, !t.isDone);
+                                  _loadData();
+                                },
+                                onDelete: (t) async {
+                                  await _service.deleteTodo(t.id);
+                                  _loadData();
+                                },
+                                onSetDeadline: _showDeadlineSheet,
+                              ),
+                  ),
+                ],
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-              child: Text(title,
-                  style: const TextStyle(
-                      fontSize: 15, fontWeight: FontWeight.w600),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // 집중 세션 탭
+  // ══════════════════════════════════════════════════════════════════
+  Widget _buildFocusTab() {
+    if (_pomoGroups.isEmpty && _stopGroups.isEmpty) {
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.timer_outlined, size: 48, color: Color(0xFFCCCCCC)),
+            SizedBox(height: 12),
+            Text('집중 세션 기록이 없어요',
+                style: TextStyle(fontSize: 15, color: Color(0xFFAAAAAA))),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 힌트
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
+          child: Text(
+            '타임라인  ›  블록 탭해서 상세보기',
+            style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF8E8E93)),
+          ),
+        ),
+        // 트랙 (스크롤)
+        Expanded(
+          child: LayoutBuilder(builder: (ctx, bc) {
+            final totalW = bc.maxWidth;
+            final mapper = _TimelineMapper.fromGroups(_pomoGroups, _stopGroups);
+            return _buildTracks(totalW, mapper);
+          }),
+        ),
+        // 범례
+        _buildLegend(),
+        // 상세 패널
+        _buildDetailPanel(),
+      ],
+    );
+  }
+
+  // ── 트랙 영역 ──────────────────────────────────────────────────────
+  Widget _buildTracks(double totalW, _TimelineMapper mapper) {
+    const timeW  = 44.0;
+    const gapW   = 6.0;
+    const labelH = 22.0;
+    final trackW = (totalW - timeW - gapW) / 2;
+    final pomoX  = timeW;
+    final stopX  = timeW + trackW + gapW;
+    final totalH = labelH + mapper.totalHeight + 8;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.only(top: 4, bottom: 12),
+      child: SizedBox(
+        width: totalW,
+        height: totalH,
+        child: Stack(
+          children: [
+            // 트랙 컬럼 레이블
+            Positioned(
+              top: 0, left: pomoX, width: trackW, height: labelH,
+              child: Center(
+                child: Text('뽀모도로',
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: _kPomoAccent.withValues(alpha: 0.7))),
+              ),
             ),
-            const Divider(height: 1),
-            ListTile(
-              leading:
-                  const Icon(Icons.delete_outline, color: Color(0xFFE74C3C)),
-              title: const Text('삭제',
-                  style: TextStyle(color: Color(0xFFE74C3C))),
-              onTap: () async {
-                Navigator.pop(context);
-                await _service.deleteTodo(todoId);
-                _loadData();
-              },
+            Positioned(
+              top: 0, left: stopX, width: trackW, height: labelH,
+              child: Center(
+                child: Text('스톱워치',
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: _kStopAccent.withValues(alpha: 0.7))),
+              ),
+            ),
+            // 시간 레이블 컬럼
+            Positioned(
+              top: labelH, left: 0, width: timeW, height: mapper.totalHeight,
+              child: Stack(children: _buildTimeCol(mapper)),
+            ),
+            // 뽀모도로 트랙
+            Positioned(
+              top: labelH, left: pomoX, width: trackW, height: mapper.totalHeight,
+              child: _buildTrackWidget(_pomoGroups, mapper,
+                  _kPomoAccent, _kPomoBlock, _kPomoText),
+            ),
+            // 스톱워치 트랙
+            Positioned(
+              top: labelH, left: stopX, width: trackW, height: mapper.totalHeight,
+              child: _buildTrackWidget(_stopGroups, mapper,
+                  _kStopAccent, _kStopBlock, _kStopText),
             ),
           ],
         ),
@@ -423,163 +642,840 @@ class _TimetableScreenState extends State<TimetableScreen> {
     );
   }
 
+  // ── 시간 레이블 컬럼 ────────────────────────────────────────────────
+  List<Widget> _buildTimeCol(_TimelineMapper mapper) {
+    final ws = <Widget>[];
+    for (final span in mapper.spans) {
+      final sy = mapper.spanStartY(span);
+      if (span.isGap) {
+        ws.add(Positioned(
+          top: sy, left: 0, right: 0, height: _TimelineMapper.gapH,
+          child: Center(
+            child: Text(
+              '${_hourLabel(span.startMin ~/ 60)} … ${_hourLabel(span.endMin ~/ 60)}',
+              style: const TextStyle(fontSize: 9, color: _kTimeLabel),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ));
+      } else {
+        for (int m = span.startMin; m < span.endMin; m += 60) {
+          final y = mapper.minutesToY(m);
+          ws.add(Positioned(
+            top: y - 7, left: 0, right: 4,
+            child: Text(
+              _hourLabel(m ~/ 60),
+              textAlign: TextAlign.right,
+              style: const TextStyle(fontSize: 10, color: _kTimeLabel),
+            ),
+          ));
+        }
+      }
+    }
+    return ws;
+  }
+
+  // ── 단일 트랙 위젯 ──────────────────────────────────────────────────
+  Widget _buildTrackWidget(
+    List<_SessionGroup> groups,
+    _TimelineMapper mapper,
+    Color accent,
+    Color blockBg,
+    Color textColor,
+  ) {
+    return Stack(
+      children: [
+        // 트랙 배경
+        Container(
+          decoration: BoxDecoration(
+            color: _kTrackBg,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: _kTrackBdr, width: 0.5),
+          ),
+        ),
+        // 시간선
+        ..._buildTrackLines(mapper),
+        // 세션 블록
+        ..._buildBlocks(groups, mapper, accent, textColor),
+      ],
+    );
+  }
+
+  // ── 트랙 격자선 ────────────────────────────────────────────────────
+  List<Widget> _buildTrackLines(_TimelineMapper mapper) {
+    final ws = <Widget>[];
+    for (final span in mapper.spans) {
+      if (span.isGap) continue;
+      for (int m = span.startMin; m < span.endMin; m += 60) {
+        final y = mapper.minutesToY(m);
+        ws.add(Positioned(
+          top: y, left: 0, right: 0, height: 1,
+          child: const ColoredBox(color: _kHourLine),
+        ));
+        for (int dm = 10; dm < 60; dm += 10) {
+          final m10 = m + dm;
+          if (m10 < span.endMin) {
+            ws.add(Positioned(
+              top: mapper.minutesToY(m10), left: 0, right: 0, height: 1,
+              child: const ColoredBox(color: _kMinLine),
+            ));
+          }
+        }
+      }
+    }
+    return ws;
+  }
+
+  // ── 세션 블록 렌더링 ────────────────────────────────────────────────
+  // • 연속 활성 세그먼트(pause 없이 이어진) → 하나의 "런(run)" 블록
+  // • 일시정지 구간은 트랙 빈 공간으로 표현 (회색 오버레이 없음)
+  // • 최소 높이 클램프로 이전 블록을 침범할 경우, 다음 블록을 밀어 내려
+  //   최소 _kPauseGap px 간격을 유지 → 겹침 방지 + 일시정지 시각화
+  static const double _kRunMinH   = 24.0; // 블록 최소 높이 (px)
+  static const double _kPauseGap  =  5.0; // 런 사이 최소 간격 (px)
+
+  List<Widget> _buildBlocks(
+    List<_SessionGroup> groups,
+    _TimelineMapper mapper,
+    Color accent,
+    Color textColor,
+  ) {
+    final ws = <Widget>[];
+
+    for (final g in groups) {
+      final isSel = _selectedGroupKey == g.key;
+
+      // ── 연속 활성 세그먼트를 "런"으로 묶기 ─────────────────────────
+      final runs = <(int, int)>[];  // (startMin, endMin)
+      int? runStart;
+      int? runEnd;
+      for (final seg in g.segments) {
+        if (seg.isActive) {
+          runStart ??= seg.startMin;
+          runEnd   = seg.endMin;
+        } else {
+          if (runStart != null) {
+            runs.add((runStart, runEnd!));
+            runStart = null;
+            runEnd   = null;
+          }
+        }
+      }
+      if (runStart != null) runs.add((runStart, runEnd!));
+
+      // ── 런마다 블록 렌더링 (위치 조정으로 겹침 방지) ───────────────
+      double prevBottom = double.negativeInfinity;
+
+      for (final (s, e) in runs) {
+        final naturalTop = mapper.minutesToY(s);
+        final naturalBot = mapper.minutesToY(e);
+        final bH = (naturalBot - naturalTop).clamp(_kRunMinH, double.infinity);
+
+        // 이전 블록 끝 + _kPauseGap 보다 위에 있으면 밀어 내림
+        final bTop = prevBottom.isNegative
+            ? naturalTop
+            : max(naturalTop, prevBottom + _kPauseGap);
+        prevBottom = bTop + bH;
+
+        ws.add(Positioned(
+          top: bTop, left: 3, right: 3, height: bH,
+          child: GestureDetector(
+            onTap: () => _selectGroup(g),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // ① accent 배경
+                  ColoredBox(color: accent),
+                  // ② 이름 레이블
+                  Positioned(
+                    top: 4, left: 5, right: 5,
+                    child: Text(
+                      g.displayLabel,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  // ③ 시간 범위 (블록이 넉넉할 때)
+                  if (bH >= 52)
+                    Positioned(
+                      bottom: 4, left: 5, right: 5,
+                      child: Text(
+                        '${_minToHM(s)}–${_minToHM(e)}',
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.white.withValues(alpha: 0.85),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  // ④ 선택 표시: 흰색 내부 테두리
+                  if (isSel)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(5),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.9),
+                              width: 2.5,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ));
+
+        // ⑤ 선택 시 외부 accent 테두리
+        if (isSel) {
+          ws.add(Positioned(
+            top: bTop - 2, left: 1, right: 1, height: bH + 4,
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: accent, width: 2),
+                ),
+              ),
+            ),
+          ));
+        }
+      }
+    }
+    return ws;
+  }
+
+  // ── 범례 ───────────────────────────────────────────────────────────
+  Widget _buildLegend() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          _LegendItem(color: _kPomoAccent, label: '뽀모도로'),
+          const SizedBox(width: 16),
+          _LegendItem(color: _kStopAccent, label: '스톱워치'),
+          const SizedBox(width: 16),
+          _LegendItem(
+              color: _kPauseBg,
+              label: '일시정지',
+              bordered: true),
+        ],
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // 상세 패널 (인라인)
+  // ══════════════════════════════════════════════════════════════════
+  Widget _buildDetailPanel() {
+    final g = _selectedGroup;
+    final isPomo    = g?.sessionType == 'pomodoro';
+    final accent    = isPomo ? _kPomoAccent : _kStopAccent;
+    final typeName  = isPomo ? '뽀모도로' : '스톱워치';
+    final title     = g == null ? '블록을 탭하세요' : '$typeName 세션 로그';
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      decoration: BoxDecoration(
+        border: Border.all(color: const Color(0xFFE5E5EA), width: 0.5),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // 헤더
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: g != null
+                  ? const Color(0xFFF8FAFF)
+                  : const Color(0xFFFAFAFA),
+              borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(13)),
+              border: const Border(
+                  bottom: BorderSide(color: Color(0xFFE5E5EA), width: 0.5)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: g != null ? accent : const Color(0xFF8E8E93),
+                    ),
+                  ),
+                ),
+                if (g != null) ...[
+                  if (!_editMode)
+                    GestureDetector(
+                      onTap: _enterEditMode,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF2F7FF),
+                          border: Border.all(
+                              color: const Color(0xFFB5D4F4), width: 0.5),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text('변경',
+                            style: TextStyle(
+                                fontSize: 12, color: accent)),
+                      ),
+                    ),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: _closeDetail,
+                    child: const Text('닫기',
+                        style: TextStyle(
+                            fontSize: 12, color: Color(0xFF8E8E93))),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          // 바디
+          g == null
+              ? const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Center(
+                    child: Text(
+                      '타임라인에서 블록을 탭하세요',
+                      style: TextStyle(
+                          fontSize: 13, color: Color(0xFFC7C7CC)),
+                    ),
+                  ),
+                )
+              : _buildDetailBody(g),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailBody(_SessionGroup g) {
+    int activeIdx = 0;
+    final isPomo  = g.sessionType == 'pomodoro';
+    final accent  = isPomo ? _kPomoAccent : _kStopAccent;
+    final dotClass = isPomo ? _kPomoAccent : _kStopAccent;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_editMode)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 6, 14, 2),
+            child: Text(
+              '활성 로그를 선택하고 이름을 입력하세요',
+              style: const TextStyle(
+                  fontSize: 11, color: Color(0xFF8E8E93)),
+            ),
+          ),
+        // 세그먼트 로그 리스트
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 180),
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: g.segments.length,
+            itemBuilder: (ctx, i) {
+              final seg = g.segments[i];
+              if (!seg.isActive) {
+                // ── 일시정지 행 ──────────────────────────────
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 8),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFF7F9FC),
+                    border: Border(
+                        bottom: BorderSide(
+                            color: Color(0xFFF0F0F5), width: 0.5)),
+                  ),
+                  child: Row(
+                    children: [
+                      // "—" 대시
+                      const SizedBox(
+                        width: 26,
+                        child: Text('—',
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                                fontSize: 12, color: Color(0xFFB0B0B0))),
+                      ),
+                      const SizedBox(width: 6),
+                      // 회색 원형 점
+                      Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFCCCCCC),
+                            shape: BoxShape.circle,
+                          )),
+                      const SizedBox(width: 8),
+                      // 라벨
+                      const Expanded(
+                        child: Text('일시정지',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFFAAAAAA),
+                              fontStyle: FontStyle.italic,
+                            )),
+                      ),
+                      // 시작 시간 (12시간 형식)
+                      Text(_minTo12H(seg.startMin),
+                          style: const TextStyle(
+                              fontSize: 11, color: Color(0xFFAAAAAA))),
+                      const SizedBox(width: 8),
+                      // 소요 시간 pill
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF0F0F5),
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: Text(
+                          _fmtDuration(seg.durationMin),
+                          style: const TextStyle(
+                              fontSize: 11, color: Color(0xFFBBBBBB)),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }
+
+              // ── 활성 세션 행 ─────────────────────────────
+              activeIdx++;
+              final num     = activeIdx;
+              final session = seg.session!;
+              final isChecked = _selectedIds.contains(session.id);
+              const defaults = {'집중 세션', '뽀모도로 세션', '스톱워치 세션', ''};
+              final rowLabel = defaults.contains(session.label)
+                  ? (isPomo ? '뽀모도로' : '스톱워치')
+                  : session.label;
+
+              return GestureDetector(
+                onTap: _editMode ? () => _toggleSession(session.id) : null,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 9),
+                  decoration: BoxDecoration(
+                    color: (_editMode && isChecked)
+                        ? const Color(0xFFE8F0FF)
+                        : Colors.white,
+                    border: const Border(
+                        bottom: BorderSide(
+                            color: Color(0xFFF2F2F7), width: 0.5)),
+                  ),
+                  child: Row(
+                    children: [
+                      // 번호 or 체크박스
+                      SizedBox(
+                        width: 26,
+                        child: _editMode
+                            ? AnimatedContainer(
+                                duration: const Duration(milliseconds: 120),
+                                width: 18,
+                                height: 18,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: isChecked
+                                      ? accent
+                                      : Colors.transparent,
+                                  border: Border.all(
+                                    color: isChecked
+                                        ? accent
+                                        : const Color(0xFFB5D4F4),
+                                    width: 1.5,
+                                  ),
+                                ),
+                                child: isChecked
+                                    ? const Icon(Icons.check,
+                                        size: 11, color: Colors.white)
+                                    : null,
+                              )
+                            : Text(
+                                '$num',
+                                textAlign: TextAlign.right,
+                                style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                    color: Color(0xFFB0B0B0)),
+                              ),
+                      ),
+                      const SizedBox(width: 6),
+                      // 색상 원형 점
+                      Container(
+                          width: 9,
+                          height: 9,
+                          decoration: BoxDecoration(
+                            color: dotClass,
+                            shape: BoxShape.circle,
+                          )),
+                      const SizedBox(width: 8),
+                      // 이름
+                      Expanded(
+                        child: Text(
+                          rowLabel,
+                          style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: Color(0xFF1E1E1E)),
+                        ),
+                      ),
+                      // 시작 시간 (12시간 형식)
+                      Text(_minTo12H(seg.startMin),
+                          style: const TextStyle(
+                              fontSize: 11, color: Color(0xFF8E8E93))),
+                      const SizedBox(width: 8),
+                      // 소요 시간 pill
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF0F4FF),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                              color: const Color(0xFFDCE8FF), width: 0.5),
+                        ),
+                        child: Text(
+                          _fmtDuration(seg.durationMin),
+                          style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              color: Color(0xFF6E8EC4)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        // 편집 바
+        if (_editMode)
+          Container(
+            padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+            decoration: const BoxDecoration(
+              color: Color(0xFFF8FAFF),
+              border: Border(
+                  top: BorderSide(color: Color(0xFFE5E5EA), width: 0.5)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _nameCtrl,
+                    autofocus: false,
+                    style: const TextStyle(fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: '이름 입력 (예: 알고리즘 공부)',
+                      hintStyle: const TextStyle(
+                          fontSize: 13, color: Color(0xFFAAAAAA)),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(
+                            color: Color(0xFFB5D4F4), width: 0.5),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(
+                            color: Color(0xFFB5D4F4), width: 0.5),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide:
+                            const BorderSide(color: _kMain, width: 1),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 7),
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                TextButton(
+                  onPressed: _cancelEdit,
+                  style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 7)),
+                  child: const Text('취소',
+                      style: TextStyle(
+                          fontSize: 13, color: Color(0xFF8E8E93))),
+                ),
+                const SizedBox(width: 4),
+                ElevatedButton(
+                  onPressed: (_isSaving ||
+                          _selectedIds.isEmpty ||
+                          _nameCtrl.text.trim().isEmpty)
+                      ? null
+                      : _applyName,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _kMain,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 7),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: _isSaving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                              color: Colors.white, strokeWidth: 2))
+                      : const Text('적용',
+                          style: TextStyle(
+                              fontSize: 13, fontWeight: FontWeight.w600)),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
 }
 
-// ── 색상 팔레트 피커 ─────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+// 범례 아이템
+// ══════════════════════════════════════════════════════════════════════
+class _LegendItem extends StatelessWidget {
+  final Color color;
+  final String label;
+  final bool bordered;
+  const _LegendItem(
+      {required this.color, required this.label, this.bordered = false});
 
-// ── 타임 그리드 ──────────────────────────────────────────────────────
-class _FocusToggle extends StatelessWidget {
-  final bool showFocus;
-  final ValueChanged<bool> onChanged;
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 9,
+          height: 9,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(3),
+            border: bordered
+                ? Border.all(color: const Color(0xFFD0DAEA), width: 0.5)
+                : null,
+          ),
+        ),
+        const SizedBox(width: 5),
+        Text(label,
+            style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93))),
+      ],
+    );
+  }
+}
 
-  const _FocusToggle({required this.showFocus, required this.onChanged});
+// ══════════════════════════════════════════════════════════════════════
+// 탭 전환 버튼
+// ══════════════════════════════════════════════════════════════════════
+class _TabSwitcher extends StatelessWidget {
+  final int selectedIndex;
+  final ValueChanged<int> onChanged;
+  final List<String> labels;
+
+  const _TabSwitcher(
+      {required this.selectedIndex,
+      required this.onChanged,
+      required this.labels});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            showFocus ? 'ToDo 랑 집중 세션 같이 보기' : 'ToDo 만 보기',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: showFocus ? _kMain : const Color(0xFF888888),
-            ),
-          ),
-          Switch(
-            value: showFocus,
-            onChanged: onChanged,
-            thumbColor: WidgetStateProperty.all(Colors.white),
-            trackColor: WidgetStateProperty.resolveWith((states) {
-              if (states.contains(WidgetState.selected)) return _kMain;
-              return const Color(0xFFCCCCCC);
-            }),
-            trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
-            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          ),
-        ],
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+      child: Container(
+        height: 38,
+        decoration: BoxDecoration(
+          color: const Color(0xFFF0F4FF),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: List.generate(labels.length, (i) {
+            final sel = i == selectedIndex;
+            return Expanded(
+              child: GestureDetector(
+                onTap: () => onChanged(i),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  margin: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                    color: sel ? _kMain : Colors.transparent,
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    labels[i],
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: sel ? Colors.white : const Color(0xFF888888),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }),
+        ),
       ),
     );
   }
 }
 
-// ── 시간 미정 섹션 ──────────────────────────────────────────────────
-class _UnscheduledSection extends StatelessWidget {
-  final List<TodoModel> items;
+// ══════════════════════════════════════════════════════════════════════
+// Todo 체크리스트 섹션
+// ══════════════════════════════════════════════════════════════════════
+class _TodoListSection extends StatelessWidget {
+  final List<TodoModel> todos;
   final Map<String, Category> categories;
   final ValueChanged<TodoModel> onToggle;
   final ValueChanged<TodoModel> onDelete;
+  final ValueChanged<TodoModel> onSetDeadline;
 
-  const _UnscheduledSection({
-    required this.items,
+  const _TodoListSection({
+    required this.todos,
     required this.categories,
     required this.onToggle,
     required this.onDelete,
+    required this.onSetDeadline,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(4, 4, 4, 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFD1D1D1)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.06),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: const BoxDecoration(
-              color: Color(0xFFE9F2FF),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-              border: Border(
-                bottom: BorderSide(color: Color(0xFFD1D1D1)),
-              ),
-            ),
-            child: const Text(
-              '하루 일정',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF6286B8),
-              ),
-            ),
-          ),
-          ...List.generate(items.length, (i) {
-            final todo = items[i];
-            return Column(
-              children: [
-                if (i > 0)
-                  const Divider(
-                      height: 1,
-                      thickness: 1,
-                      indent: 16,
-                      endIndent: 16,
-                      color: Color(0xFFF0F0F0)),
-                _UnscheduledTile(
-                  todo: todo,
-                  categoryName: categories[todo.categoryId]?.name,
-                  chipColor: _hexColor(categories[todo.categoryId]?.color ?? _kDefaultTodoColor),
-                  onToggle: () => onToggle(todo),
-                  onDelete: () => onDelete(todo),
-                ),
-              ],
-            );
-          }),
-        ],
-      ),
+    if (todos.isEmpty) {
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.check_circle_outline,
+                size: 48, color: Color(0xFFCCCCCC)),
+            SizedBox(height: 12),
+            Text('오늘의 할 일이 없어요',
+                style: TextStyle(fontSize: 15, color: Color(0xFFAAAAAA))),
+          ],
+        ),
+      );
+    }
+    final undone = todos.where((t) => !t.isDone).toList();
+    final done   = todos.where((t) =>  t.isDone).toList();
+    final sorted = [...undone, ...done];
+
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 96),
+      itemCount: sorted.length,
+      separatorBuilder: (context, index) =>
+          const Divider(height: 1, thickness: 1, color: Color(0xFFF0F0F0)),
+      itemBuilder: (ctx, i) {
+        final todo = sorted[i];
+        final chipColor = _hexColor(
+            categories[todo.categoryId]?.color ?? _kDefaultColor);
+        return _TodoTile(
+          todo: todo,
+          categoryName: categories[todo.categoryId]?.name,
+          chipColor: chipColor,
+          onToggle: () => onToggle(todo),
+          onDelete: () => onDelete(todo),
+          onSetDeadline: () => onSetDeadline(todo),
+        );
+      },
     );
   }
 }
 
-class _UnscheduledTile extends StatelessWidget {
+class _TodoTile extends StatelessWidget {
   final TodoModel todo;
   final String? categoryName;
   final Color chipColor;
   final VoidCallback onToggle;
   final VoidCallback onDelete;
+  final VoidCallback onSetDeadline;
 
-  const _UnscheduledTile({
+  const _TodoTile({
     required this.todo,
     required this.categoryName,
     required this.chipColor,
     required this.onToggle,
     required this.onDelete,
+    required this.onSetDeadline,
   });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onToggle,
+      onLongPress: () => _showOptions(context),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Expanded(
-              child: Text(
-                todo.content,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                  color: todo.isDone
-                      ? const Color(0xFFAAAAAA)
-                      : Colors.black87,
-                  decoration:
-                      todo.isDone ? TextDecoration.lineThrough : null,
+            GestureDetector(
+              onTap: onToggle,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                width: 24, height: 24,
+                decoration: BoxDecoration(
+                  color: todo.isDone ? _kMain : Colors.transparent,
+                  border: Border.all(
+                    color: todo.isDone ? _kMain : const Color(0xFFCCCCCC),
+                    width: 2,
+                  ),
+                  borderRadius: BorderRadius.circular(6),
                 ),
+                child: todo.isDone
+                    ? const Icon(Icons.check, size: 14, color: Colors.white)
+                    : null,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    todo.content,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      color: todo.isDone
+                          ? const Color(0xFFAAAAAA)
+                          : Colors.black87,
+                      decoration:
+                          todo.isDone ? TextDecoration.lineThrough : null,
+                    ),
+                  ),
+                  if (todo.deadlineTime != null) ...[
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        const Icon(Icons.schedule,
+                            size: 12, color: Color(0xFF888888)),
+                        const SizedBox(width: 3),
+                        Text('마감 ${todo.deadlineTime}',
+                            style: const TextStyle(
+                                fontSize: 12, color: Color(0xFF888888))),
+                      ],
+                    ),
+                  ],
+                ],
               ),
             ),
             if (categoryName != null)
@@ -593,31 +1489,9 @@ class _UnscheduledTile extends StatelessWidget {
                 child: Text(
                   categoryName!,
                   style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: chipColor,
-                  ),
-                ),
-              ),
-            // 마감 시각은 설정했을 때만 보여준다.
-            if (todo.hasDeadline)
-              Padding(
-                padding: const EdgeInsets.only(left: 10),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.schedule,
-                        size: 14, color: Color(0xFF8E8E8E)),
-                    const SizedBox(width: 3),
-                    Text(
-                      todo.deadlineTime!,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: Color(0xFF8E8E8E),
-                      ),
-                    ),
-                  ],
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: chipColor),
                 ),
               ),
           ],
@@ -626,190 +1500,188 @@ class _UnscheduledTile extends StatelessWidget {
     );
   }
 
-}
-
-// ── 색상 팔레트 피커 ─────────────────────────────────────────────────
-
-// ── 타임 그리드 ──────────────────────────────────────────────────────
-
-class _TimeGrid extends StatelessWidget {
-  final List<_BlockLayout> layouts;
-  final void Function(String id, String label)? onFocusTap;
-  final void Function(String id, String title)? onTodoTap;
-
-  const _TimeGrid(
-      {required this.layouts, this.onFocusTap, this.onTodoTap});
-
-  static const double _hourH = 64.0;
-  static const double _labelW = 56.0;
-
-  @override
-  Widget build(BuildContext context) {
-    const double totalH = 24 * _hourH;
-    return LayoutBuilder(
-      builder: (ctx, bc) {
-        final totalW = bc.maxWidth;
-        final gridW = totalW - _labelW;
-        return SingleChildScrollView(
-          padding: const EdgeInsets.only(top: 8, bottom: 96),
-          child: SizedBox(
-            width: totalW,
-            height: totalH,
-            child: Stack(
-              children: [
-                ...List.generate(24, (h) {
-                  final y = h * _hourH;
-                  return Stack(children: [
-                    Positioned(
-                      top: y - 8,
-                      left: 0,
-                      width: _labelW - 8,
-                      child: Text(
-                        '${h.toString().padLeft(2, '0')}:00',
-                        textAlign: TextAlign.right,
-                        style: const TextStyle(
-                            fontSize: 11, color: Color(0xFFBBBBBB)),
-                      ),
-                    ),
-                    Positioned(
-                      top: y,
-                      left: _labelW,
-                      width: gridW,
-                      height: 1,
-                      child: const ColoredBox(color: Color(0xFFEDEDED)),
-                    ),
-                  ]);
-                }),
-                ...layouts.map((l) {
-                  final top = l.startMinutes * _hourH / 60;
-                  final height =
-                      ((l.endMinutes - l.startMinutes) * _hourH / 60)
-                          .clamp(24.0, double.infinity);
-                  final colW = gridW / l.totalColumns;
-                  final left = _labelW + l.column * colW + 2;
-
-                  final Color accent;
-                  final Color bg;
-                  final Color textC;
-
-                  if (l.isFocus) {
-                    accent = _kMain;
-                    bg = const Color(0xFFE8F1FF);
-                    textC = const Color(0xFF1565C0);
-                  } else {
-                    accent = _hexColor(l.color);
-                    bg = Color.alphaBlend(accent.withValues(alpha: 0.13), Colors.white);
-                    textC = Color.alphaBlend(accent.withValues(alpha: 0.75), Colors.black);
-                  }
-
-                  return Positioned(
-                    top: top,
-                    left: left,
-                    width: colW - 4,
-                    height: height,
-                    child: GestureDetector(
-                      onTap: l.isFocus
-                          ? () => onFocusTap?.call(l.id, l.title)
-                          : () => onTodoTap?.call(l.id, l.title),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(10),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.07),
-                              blurRadius: 4,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Container(width: 4, color: accent),
-                              Expanded(
-                                child: Container(
-                                  color: bg,
-                                  padding: EdgeInsets.fromLTRB(
-                                    9,
-                                    height < 30 ? 4 : 8,
-                                    8,
-                                    height < 30 ? 2 : 6,
-                                  ),
-                                  child: height < 18
-                                      ? const SizedBox.shrink()
-                                      : Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Flexible(
-                                              child: Text(
-                                                l.title,
-                                                style: TextStyle(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.bold,
-                                                  color: textC,
-                                                  decoration: l.isDone
-                                                      ? TextDecoration
-                                                          .lineThrough
-                                                      : null,
-                                                ),
-                                                overflow: TextOverflow.ellipsis,
-                                                maxLines: 1,
-                                              ),
-                                            ),
-                                            if (height > 46)
-                                              Text(
-                                                '${_minutesToTime(l.startMinutes)} ~ ${_minutesToTime(l.endMinutes)}',
-                                                style: TextStyle(
-                                                  fontSize: 11,
-                                                  color: textC.withValues(
-                                                      alpha: 0.7),
-                                                ),
-                                              ),
-                                          ],
-                                        ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                }),
-              ],
+  void _showOptions(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                  color: const Color(0xFFDDDDDD),
+                  borderRadius: BorderRadius.circular(2)),
             ),
-          ),
-        );
-      },
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+              child: Text(todo.content,
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w600),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.schedule, color: _kMain),
+              title: const Text('마감 시간 설정'),
+              onTap: () {
+                Navigator.pop(context);
+                onSetDeadline();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline,
+                  color: Color(0xFFE74C3C)),
+              title: const Text('삭제',
+                  style: TextStyle(color: Color(0xFFE74C3C))),
+              onTap: () {
+                Navigator.pop(context);
+                onDelete();
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
 
-// ── 내부 블록 레이아웃 데이터 ────────────────────────────────────────
-class _BlockLayout {
-  final String id;
-  final String title;
-  final int startMinutes;
-  final int endMinutes;
-  final bool isFocus;
-  final bool isDone;
-  final String color;
-  int column = 0;
-  int totalColumns = 1;
+// ══════════════════════════════════════════════════════════════════════
+// 마감 시간 바텀시트
+// ══════════════════════════════════════════════════════════════════════
+class _DeadlineSheet extends StatefulWidget {
+  final TodoModel todo;
+  final TimetableService service;
+  final VoidCallback onSaved;
 
-  _BlockLayout({
-    required this.id,
-    required this.title,
-    required this.startMinutes,
-    required this.endMinutes,
-    required this.isFocus,
-    required this.isDone,
-    required this.color,
-  });
+  const _DeadlineSheet(
+      {required this.todo, required this.service, required this.onSaved});
+
+  @override
+  State<_DeadlineSheet> createState() => _DeadlineSheetState();
 }
 
-// ── 시간 지정 바텀시트 ───────────────────────────────────────────────
+class _DeadlineSheetState extends State<_DeadlineSheet> {
+  String? _deadlineTime;
+
+  @override
+  void initState() {
+    super.initState();
+    _deadlineTime = widget.todo.deadlineTime;
+  }
+
+  String _fmt(TimeOfDay t) =>
+      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  Future<void> _pick() async {
+    final init = _deadlineTime != null
+        ? TimeOfDay(
+            hour:   int.parse(_deadlineTime!.split(':')[0]),
+            minute: int.parse(_deadlineTime!.split(':')[1]))
+        : TimeOfDay.now();
+    final p = await showTimePicker(context: context, initialTime: init);
+    if (p != null) setState(() => _deadlineTime = _fmt(p));
+  }
+
+  Future<void> _save() async {
+    await widget.service.updateDeadlineTime(widget.todo.id, _deadlineTime);
+    if (!mounted) return;
+    Navigator.pop(context);
+    widget.onSaved();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasV = _deadlineTime != null;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20, right: 20, top: 24,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                  color: const Color(0xFFDDDDDD),
+                  borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+          const Text('마감 시간 설정',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          Text(widget.todo.content,
+              style: const TextStyle(fontSize: 14, color: Color(0xFF666666)),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 16),
+          GestureDetector(
+            onTap: _pick,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              decoration: BoxDecoration(
+                border: Border.all(
+                    color: hasV ? _kMain : const Color(0xFFCCCCCC)),
+                borderRadius: BorderRadius.circular(10),
+                color: hasV ? const Color(0xFFEEF4FF) : Colors.white,
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.schedule,
+                      size: 18,
+                      color: hasV ? _kMain : const Color(0xFF888888)),
+                  const SizedBox(width: 8),
+                  Text(
+                    hasV ? _deadlineTime! : '마감 시간 선택',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: hasV ? FontWeight.w600 : FontWeight.normal,
+                      color: hasV ? _kMain : const Color(0xFF888888),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (hasV)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () => setState(() => _deadlineTime = null),
+                child: const Text('마감 시간 제거',
+                    style:
+                        TextStyle(color: Color(0xFF888888), fontSize: 13)),
+              ),
+            ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _save,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _kMain,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+              child: const Text('저장',
+                  style: TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

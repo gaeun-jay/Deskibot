@@ -179,8 +179,9 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
           pauseEvents: [..._stopwatch.pauseEvents, pauseEvent],
           clearPausedAt: true,
         );
-        // ESP32 resume 시 RTDB total_pause_sec도 업데이트
-        _service.resumeStopwatch(now.difference(pausedAt).inSeconds);
+        // ESP32 resume 시 서버 상태 업데이트
+        _service.resumeStopwatch(
+            _stopwatch.sessionId, now.difference(pausedAt).inSeconds);
         WakelockPlus.enable();
         _startTicker();
       }
@@ -374,7 +375,7 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> pauseStopwatch() async {
-    await _service.pauseStopwatch();
+    await _service.pauseStopwatch(_stopwatch.sessionId);
     _ticker?.cancel();
     _stopwatch = _stopwatch.copyWith(
       status: TimerStatus.paused,
@@ -389,7 +390,7 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
     final pauseSec = _stopwatch.pausedAt != null
         ? now.difference(_stopwatch.pausedAt!).inSeconds
         : 0;
-    await _service.resumeStopwatch(pauseSec);
+    await _service.resumeStopwatch(_stopwatch.sessionId, pauseSec);
 
     if (_stopwatch.pausedAt != null) {
       final pausedAt = _stopwatch.pausedAt!;
