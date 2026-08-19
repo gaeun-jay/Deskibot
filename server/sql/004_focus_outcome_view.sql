@@ -18,6 +18,10 @@
 
 BEGIN;
 
+-- focus_sessions의 컬럼을 하나도 빼지 않고 그대로 통과시킨다. 조회 쿼리에서
+-- FROM만 갈아끼우면 되도록 하기 위해서다 — runtime_state나 state_version을
+-- 빼두면 focus_history_service._SESSION_COLUMNS가 그 둘을 셀렉트하다가 깨진다.
+--
 -- 컬럼을 명시적으로 나열한다. SELECT *를 쓰면 focus_sessions에 컬럼이 추가될 때
 -- CREATE OR REPLACE VIEW가 실패한다 (기존 컬럼 뒤에만 추가할 수 있는데,
 -- 새 테이블 컬럼은 end_reason 앞에 끼어들기 때문).
@@ -34,6 +38,10 @@ SELECT
     s.planned_duration_sec,
     s.actual_duration_sec,
     s.total_pause_duration_sec,
+    s.runtime_state,
+    s.paused_at,
+    s.state_version,
+    s.state_updated_at,
     s.initiated_by,
     s.last_changed_by,
 
