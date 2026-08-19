@@ -416,6 +416,49 @@ def _confirm_beep(ms: int = 150, hz: int = 880) -> bytes:
     return bytes(out)
 
 
+# ─── 호출어 보정 ──────────────────────────────────────────────────────────────
+# CLOVA CSR에는 키워드 부스팅이 없다(Google의 phrase hints에 해당하는 기능이
+# CLOVA Speech 장문 API에만 있다). 그래서 후처리로 보완한다.
+#
+# 실측 90발화에서 CLOVA의 호출어 오인식은 "데 스키보드" 계열로 뭉쳐 있었다
+# (15건 중 10건). 문장 머리 1~3어절을 붙여 "데스키봇"과 편집거리를 재고,
+# 길이 대비 0.5 이하면 되돌린다.
+#
+# 문턱은 기존 데이터셋으로 정했다. 0.5에서 복원 12/15, 오탐 0건이다.
+# (0.75로 올리면 복원 14건이지만 호출어 없는 발화 9건에 잘못 끼워넣는다.)
+_WAKE_WORD = "데스키봇"
+_WAKE_MAX_DIST_RATIO = 0.5
+
+
+def _edit_distance(a: str, b: str) -> int:
+    if len(a) < len(b):
+        a, b = b, a
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def fix_wake_word(text: str) -> str:
+    """문장 머리의 호출어 오인식만 되돌린다. 나머지 구간은 건드리지 않는다."""
+    if not text or _WAKE_WORD in text:
+        return text
+    toks = text.split()
+    for n in (3, 2, 1):                    # "데 스키 보드"처럼 띄어 나오는 경우까지
+        if len(toks) < n:
+            continue
+        head = "".join(toks[:n])
+        if not (2 <= len(head) <= 7):
+            continue
+        if _edit_distance(head, _WAKE_WORD) / len(_WAKE_WORD) <= _WAKE_MAX_DIST_RATIO:
+            print(f"[STT] 호출어 보정: \"{' '.join(toks[:n])}\" -> \"{_WAKE_WORD}\"", flush=True)
+            return " ".join([_WAKE_WORD] + toks[n:])
+    return text
+
+
 # ─── STT ─────────────────────────────────────────────────────────────────────
 # 엔진은 환경변수로 고른다. 문제가 생기면 재배포 없이 .env만 바꿔 되돌릴 수 있다.
 #
@@ -494,6 +537,7 @@ def run_stt(pcm: bytes) -> str:
             print(f"[STT] ❌ 양쪽 모두 실패: {e2}", flush=True)
             return ""
 
+    transcript = fix_wake_word(transcript)
     status = "✅" if transcript else "⚠️ (빈 결과)"
     print(f"[STT] {status} ({time.time()-t0:.2f}s): \"{transcript}\"", flush=True)
     return transcript

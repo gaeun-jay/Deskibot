@@ -11,7 +11,7 @@ set -euo pipefail
 HOST=deskibot-osaka
 APP=/home/ubuntu/Deskibot/server/hw
 STAGE=/tmp/deskibot-hw-deploy
-BACKUP="backups/pre-clova-switch"      # 배포 건마다 새 이름을 쓸 것
+BACKUP="backups/pre-wakeword-fix"      # 배포 건마다 새 이름을 쓸 것
 LOCAL="$(cd "$(dirname "$0")" && pwd)"
 
 echo "── 1. 로컬 검증 ──────────────────────────────────────────"
