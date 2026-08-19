@@ -318,7 +318,8 @@ esp 브랜치 → server/sql/004_focus_outcome_view.sql
 ```
 
 `database/` 시퀀스의 `004`로 옮겨 적용해 주시면 됩니다. 뷰 하나 추가라 기존
-테이블·제약·앱 어느 쪽도 건드리지 않습니다.
+테이블·제약·앱 어느 쪽도 건드리지 않습니다. `focus_sessions`의 컬럼을 하나도
+빼지 않고 그대로 통과시키므로, 조회 쿼리는 `FROM`만 바꾸면 됩니다.
 
 | `status` | 뷰의 `end_reason` |
 |---|---|
@@ -326,6 +327,26 @@ esp 브랜치 → server/sql/004_focus_outcome_view.sql
 | `incomplete` | `user_stopped` |
 | `interrupted` | `no_user` |
 | `in_progress` | `NULL` |
+
+##### 함께 부탁드릴 코드 변경 — `daily_analysis_service.py` 2줄
+
+하루 분석 프롬프트에 종료 사유가 그대로 실리는데, 지금은 `(incomplete)`가
+들어가서 모델이 **"자리를 떠서 끊긴 것"과 "본인이 그만둔 것"을 구분하지
+못합니다.** 조언 문구가 달라져야 하는 지점이라 여기만 바꿔주시면 좋겠습니다.
+
+```python
+# :110  조회를 뷰로
+SELECT type, status, end_reason, actual_duration_sec
+FROM focus_session_outcomes
+WHERE user_id = %s AND session_date = %s AND status <> 'in_progress'
+
+# :80   프롬프트에 싣는 값
+f" ({s['end_reason']})"     # 기존: f" ({s['status']})"
+```
+
+`focus_history_service.py`는 이번에 건드리지 않습니다. 앱에 종료 사유를
+표시하는 화면이 아직 없어서 API에 필드를 내려도 읽는 쪽이 없습니다.
+앱에 자리가 생기면 그때 앱 작업과 같이 요청드리겠습니다.
 
 **`status` 값 자체를 `user_stopped` 같은 이름으로 바꾸는 건 하지 말아 주세요.**
 `FINAL_STATUSES`가 모르는 값을 `invalid_outcome`으로 거부해 `focus_end`가 실패하고,
