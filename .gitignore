@@ -19,3 +19,9 @@ __pycache__/
 
 # 시리얼 캡처 로그
 *.log
+
+# STT 벤치마크
+# 녹음 원본(90개 wav)은 용량이 커서 제외한다. 반면 전사 결과·지표·그래프는
+# 보고서의 근거이므로 커밋한다 — 이게 없으면 결론을 재검증할 수 없다.
+server/bench/audio/
+server/bench/audio_ulaw/

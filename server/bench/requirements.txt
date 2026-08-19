@@ -1,0 +1,4 @@
+# 벤치 전용 추가 의존성. 서버 requirements.txt와 별도로 설치한다.
+#   venv/bin/pip install -r bench/requirements.txt
+requests>=2.31.0
+matplotlib>=3.8.0
