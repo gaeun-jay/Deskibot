@@ -121,6 +121,60 @@ void show_alert(int type) {
     Serial.printf("[Alert] %s\n", drowsy ? "Drowsy" : "Phone");
 }
 
+// ─── 자리 비움 종료 안내 (진행 화면 위 회색 스크림) ──────────────────────────
+// 감지 팝업과 달리 배경 이미지를 쓰지 않는다. 뒤의 뽀모도로 진행 화면이 비쳐
+// 보여야 "이 세션이 끝났다"는 게 읽히기 때문에, 반투명 회색만 덮고 문구를 올린다.
+// 문구는 pretendard_semibold_28로 — 전체 한글 + ASCII를 담고 있는 유일한 폰트다.
+static lv_obj_t *away_overlay = nullptr;
+
+// 자리를 비운 사람은 몇 초짜리 안내를 볼 수 없다. 그래서 자동으로 닫지 않고
+// 돌아온 사람이 화면을 탭할 때까지 유지한다. 다만 LVGL 콜백 안에서 자기 자신을
+// 삭제하면 안 되므로, 여기서는 요청만 세우고 실제 해제는 메인 루프에서 한다.
+static volatile bool _away_dismiss_req = false;
+
+void hide_away_notice() {
+    if (away_overlay == nullptr) return;
+    lv_obj_del(away_overlay);
+    away_overlay = nullptr;
+    _away_dismiss_req = false;
+}
+
+static void _away_tap_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    _away_dismiss_req = true;
+}
+
+void show_away_notice() {
+    if (away_overlay) hide_away_notice();
+
+    away_overlay = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(away_overlay, 466, 466);
+    lv_obj_center(away_overlay);
+    lv_obj_set_style_bg_color(away_overlay, lv_color_hex(0x11151C), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(away_overlay, LV_OPA_80, LV_PART_MAIN);
+    lv_obj_set_style_border_width(away_overlay, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(away_overlay, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(away_overlay, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(away_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(away_overlay, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(away_overlay, _away_tap_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *title = lv_label_create(away_overlay);
+    lv_label_set_text(title, "자리 비움으로 종료");
+    lv_obj_set_style_text_font(title, &pretendard_semibold_28, LV_PART_MAIN);
+    lv_obj_set_style_text_color(title, lv_color_white(), LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, -18);
+
+    lv_obj_t *sub = lv_label_create(away_overlay);
+    lv_label_set_text(sub, "5분 이상 자리를 비웠어요");
+    lv_obj_set_style_text_font(sub, &pretendard_semibold_28, LV_PART_MAIN);
+    lv_obj_set_style_text_color(sub, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_opa(sub, LV_OPA_60, LV_PART_MAIN);
+    lv_obj_align(sub, LV_ALIGN_CENTER, 0, 24);
+
+    Serial.println("[Away] 자리 비움 종료 안내 표시");
+}
+
 // ─── 할 일 마감 팝업 ─────────────────────────────────────────────────────────
 static lv_obj_t *dl_overlay = nullptr;
 static lv_obj_t *dl_bg      = nullptr;

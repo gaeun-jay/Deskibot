@@ -244,7 +244,7 @@ SW팀이 같은 서버를 건드릴 때 **깨면 안 되는 부분**입니다.
 {"type":"focus_start","mode":"stopwatch"}
 {"type":"focus_pause","session_id":"...","revision":0}
 {"type":"focus_resume","session_id":"...","revision":1}
-{"type":"focus_end","session_id":"...","revision":2}
+{"type":"focus_end","session_id":"...","revision":2,"outcome":"incomplete"}
 
 {"type":"detection_start","kind":"drowsy"}   // kind: drowsy | phone
 {"type":"detection_end","kind":"phone"}
@@ -285,6 +285,28 @@ SW팀이 같은 서버를 건드릴 때 **깨면 안 되는 부분**입니다.
 > runtime_state == "paused"   → 일시정지
 > 그 외                        → 진행 중
 > ```
+
+#### `focus_end`의 `outcome` — 종료 사유 구분
+
+로봇도 이제 `outcome`을 함께 보냅니다. 서버는 이 값을 그대로
+`focus_sessions.status`에 넣고, 생략되면 `completed`로 처리합니다
+(`app/main.py`의 `message.get("outcome", "completed")`).
+
+| outcome | 의미 | 보내는 쪽 |
+|---|---|---|
+| `completed` | 뽀모도로 타이머 만료 / 스톱워치 정상 종료 | 로봇·앱 |
+| `incomplete` | 사용자가 직접 강제 종료 (로봇은 화면 두 번 탭) | 로봇·앱 |
+| `interrupted` | 자리 비움 5분 감지로 **시스템이** 강제 종료 | 로봇 |
+
+`interrupted`는 사용자 조작이 아닌 종료를 뜻합니다. 로그 분석에서 "본인이 그만둔 것"과
+"자리를 떠서 끊긴 것"을 구분해야 해서 값을 나눴습니다. 세 값 모두 기존 스키마 CHECK
+(`in_progress / completed / incomplete / interrupted`)에 이미 있어 **마이그레이션은
+없습니다.** 스톱워치는 `outcome`을 아예 싣지 않으므로 종전대로 `completed`가 됩니다.
+
+자리 비움 자체는 `focus_session_events`에 남기지 않습니다 —
+`kind`의 CHECK에 값이 없고, 세션 status만으로 분석이 가능해서 스키마를 건드리지
+않는 쪽을 골랐습니다. 이벤트 단위 기록이 필요해지면 그때 `kind`에
+`no_person` 추가를 요청드리겠습니다.
 
 **그 외 주의점**
 

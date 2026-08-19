@@ -386,7 +386,13 @@ void aws_backend_loop() {
     }
 }
 
-bool aws_focus_send(const char *mode, const char *action, int planned_duration_sec) {
+// outcome은 focus_end에만 실린다. nullptr을 주면 필드를 빼고, 서버는 기본값
+// "completed"로 처리한다 (스톱워치는 이 경로를 그대로 쓴다).
+//   completed   — 타이머 만료로 자연 종료
+//   incomplete  — 사용자가 화면을 두 번 탭해 강제 종료
+//   interrupted — 자리 비움 감지로 시스템이 강제 종료
+bool aws_focus_send(const char *mode, const char *action, int planned_duration_sec,
+                    const char *outcome) {
     if (_focus_command_pending) {
         Serial.println("[AWS WS] 이전 집중 명령의 focus_state 대기 중");
         return false;
@@ -414,6 +420,11 @@ bool aws_focus_send(const char *mode, const char *action, int planned_duration_s
         message += _focus_session_id;
         message += F("\",\"revision\":");
         message += _focus_revision;
+        if (strcmp(action, "end") == 0 && outcome && outcome[0]) {
+            message += F(",\"outcome\":\"");
+            message += outcome;
+            message += '"';
+        }
         message += '}';
         _focus_command_revision = _focus_revision;
     }

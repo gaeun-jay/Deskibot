@@ -14,6 +14,9 @@ LV_IMAGE_DECLARE(bg_pomodoro_end);
 #define POMO_IDLE    0
 #define POMO_RUNNING 1
 #define POMO_DONE    2
+// 자리 비움으로 시스템이 강제 종료한 상태. 진행 화면 레이아웃을 그대로 둔 채
+// 회색 스크림만 덮으므로 _pomo_update_ui()에서 별도 배치를 하지 않는다.
+#define POMO_AWAY    3
 
 int _pomo_state         = POMO_IDLE;
 static uint32_t _pomo_totalSec  = 0;
@@ -23,7 +26,10 @@ static uint32_t _pomo_lastTick  = 0;
 // ─── 백엔드/시간 헬퍼 전방 선언 (나중에 include됨) ──────────────────────────
 void get_iso_now(char *buf, size_t len);
 bool aws_focus_send(const char *mode, const char *action,
-                    int planned_duration_sec);
+                    int planned_duration_sec, const char *outcome);
+// popup.h는 이 파일 뒤에 include된다 — 자리 비움 스크림 제어만 미리 선언한다.
+void show_away_notice();
+void hide_away_notice();
 
 // ─── 세션 추적 변수 ──────────────────────────────────────────────────────────
 static char _pomo_session_id[64] = {};
@@ -71,10 +77,16 @@ static void _pomo_start_anim(lv_coord_t base_y) {
 }
 
 // ─── 세션 종료 공통 처리 (타이머 완료 / 강제종료 공용) ───────────────────────
-static void _pomo_finish_session(const char *ended_at, int actual_min) {
+// outcome이 그대로 focus_sessions.status가 된다. 로그 분석에서 세 경우를
+// 구분해야 하므로 종료 경로마다 다른 값을 넘긴다.
+//   completed   — 타이머 만료
+//   incomplete  — 사용자가 화면을 두 번 탭
+//   interrupted — 자리 비움 5분으로 시스템이 종료
+static void _pomo_finish_session(const char *ended_at, int actual_min,
+                                 const char *outcome) {
     (void)ended_at;
     (void)actual_min;
-    aws_focus_send("pomodoro", "end", 0);
+    aws_focus_send("pomodoro", "end", 0, outcome);
 }
 
 // ─── 뽀모도로 상태 UI 업데이트 ───────────────────────────────────────────────
@@ -122,6 +134,13 @@ static void _pomo_update_ui() {
             lv_obj_add_flag  (pomo_touch_end,   LV_OBJ_FLAG_HIDDEN);
             lv_anim_delete(pomo_img_tomato, (lv_anim_exec_xcb_t)lv_obj_set_y);
             break;
+
+        case POMO_AWAY:
+            // 진행 화면을 그대로 남겨 두고 위에 회색 스크림만 덮는다.
+            // 배치를 다시 잡으면 사라진 세션 화면이 깜빡이므로 아무것도 옮기지 않고,
+            // 이미 종료된 세션이 두 번 탭으로 또 종료되지 않게 터치 영역만 걷는다.
+            lv_obj_add_flag(pomo_touch_end, LV_OBJ_FLAG_HIDDEN);
+            break;
     }
 }
 
@@ -148,7 +167,8 @@ static void pomo_timer_cb(lv_timer_t *timer) {
         char ended_at[32];
         get_iso_now(ended_at, sizeof(ended_at));
         int planned_min = (int)(_pomo_totalSec / 60);
-        _pomo_finish_session(ended_at, planned_min);  // 자연 완료 — actual = planned
+        // 자연 완료 — actual = planned
+        _pomo_finish_session(ended_at, planned_min, "completed");
 
         _pomo_state = POMO_DONE;
         _pomo_update_ui();
@@ -164,7 +184,7 @@ static void pomo_timer_cb(lv_timer_t *timer) {
 
 // ─── 버튼 콜백 ───────────────────────────────────────────────────────────────
 static void _pomo_start(int minutes) {
-    if (!aws_focus_send("pomodoro", "start", minutes * 60)) return;
+    if (!aws_focus_send("pomodoro", "start", minutes * 60, nullptr)) return;
     _pomo_session_id[0] = '\0';  // focus_state에서 서버 ID를 받는다.
     get_iso_now(_pomo_started_at, sizeof(_pomo_started_at));
     _pomo_state          = POMO_RUNNING;
@@ -186,17 +206,23 @@ static void pomo_btn50_cb(lv_event_t *e) {
     _pomo_start(50);
 }
 
+// 진행 중 세션의 실제 경과 분. 서버가 actual_duration_sec을 직접 계산하므로
+// 로그용이지만, 두 종료 경로가 같은 값을 쓰도록 한 군데로 모은다.
+static int _pomo_elapsed_min() {
+    int elapsed_sec = (int)(_pomo_totalSec - _pomo_remainSec);
+    return elapsed_sec > 0 ? (int)(elapsed_sec / 60) : 1;
+}
+
+// 사용자가 화면을 두 번 탭한 강제 종료 — DB에는 incomplete로 남는다.
 static void _pomo_force_finish() {
     char ended_at[32];
     get_iso_now(ended_at, sizeof(ended_at));
-    int elapsed_sec = (int)(_pomo_totalSec - _pomo_remainSec);
-    int actual_min  = elapsed_sec > 0 ? (int)(elapsed_sec / 60) : 1;
-    _pomo_finish_session(ended_at, actual_min);
+    _pomo_finish_session(ended_at, _pomo_elapsed_min(), "incomplete");
 
     _pomo_remainSec = 0;
     _pomo_state     = POMO_DONE;
     _pomo_update_ui();
-    Serial.println("[Pomo] 강제 종료");
+    Serial.println("[Pomo] 강제 종료 (사용자 두 번 탭) — outcome=incomplete");
 
     lv_timer_t *rt = lv_timer_create([](lv_timer_t *t) {
         _pomo_state = POMO_IDLE;
@@ -205,6 +231,33 @@ static void _pomo_force_finish() {
         lv_timer_delete(t);
     }, 3000, NULL);
     lv_timer_set_repeat_count(rt, 1);
+}
+
+// ─── 자리 비움 강제 종료 (RPi가 5분 이상 no person을 보고했을 때) ────────────
+// 사용자 조작이 아니라 시스템 종료라 DB에는 interrupted로 남긴다.
+// 완료 화면(bg_pomodoro_end)으로 넘기지 않고 진행 화면 위에 스크림만 덮는다 —
+// 자리를 비운 사람은 3초짜리 안내를 못 보므로, 돌아와서 탭할 때까지 유지한다.
+void pomo_away_finish() {
+    if (_pomo_state != POMO_RUNNING) return;
+    char ended_at[32];
+    get_iso_now(ended_at, sizeof(ended_at));
+    _pomo_finish_session(ended_at, _pomo_elapsed_min(), "interrupted");
+
+    _pomo_state = POMO_AWAY;
+    _pomo_update_ui();
+    show_away_notice();
+    Serial.println("[Pomo] 자리 비움 강제 종료 — outcome=interrupted");
+}
+
+// 스크림 해제 — 사용자가 돌아와 탭했거나 RPi가 no person 해제를 알려온 경우.
+void pomo_away_dismiss() {
+    if (_pomo_state != POMO_AWAY) return;
+    hide_away_notice();
+    _pomo_state = POMO_IDLE;
+    _pomo_remainSec = 0;
+    _pomo_session_id[0] = '\0'; _pomo_started_at[0] = '\0';
+    _pomo_update_ui();
+    Serial.println("[Pomo] 자리 비움 안내 해제 → 대기 화면");
 }
 
 // 진행 화면을 두 번 연속 탭하면 종료. 버튼을 두지 않아 오탭으로 세션이 끊기면

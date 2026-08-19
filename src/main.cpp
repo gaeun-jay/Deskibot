@@ -65,6 +65,14 @@ static bool can_switch() {
         Serial.println("[App] 뽀모도로 진행 중 — 스와이프 무시");
         return false;
     }
+    // 자리 비움 안내가 떠 있는 동안에도 화면을 떠나지 못하게 한다. 안내를 탭해
+    // 닫으면 IDLE로 돌아가고, 그 뒤에야 스와이프가 열린다. 진행 화면 오브젝트를
+    // 그대로 두고 스크림만 덮는 구조라, 여기서 화면을 갈아엎으면 pomo_* 포인터가
+    // 해제된 뒤 안내 해제 경로에서 다시 접근된다.
+    if (_pomo_state == POMO_AWAY) {
+        Serial.println("[App] 자리 비움 안내 표시 중 — 스와이프 무시");
+        return false;
+    }
     return true;
 }
 

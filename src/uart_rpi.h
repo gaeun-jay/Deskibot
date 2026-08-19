@@ -2,8 +2,12 @@
 #include <Arduino.h>
 
 // ─── RPi 감지 링크 (UART) ────────────────────────────────────────────────────
-// RPi5가 잡은 졸음/폰 감지 상태를 UART로 직접 받는다.
-// 프로토콜: "DROWSY:<0|1>,PHONE:<0|1>\n"   예) "DROWSY:1,PHONE:0"
+// RPi5가 잡은 졸음/폰/자리비움 감지 상태를 UART로 직접 받는다.
+// 프로토콜: "DROWSY:<0|1>,PHONE:<0|1>,NOPERSON:<0|1>\n"
+//   예) "DROWSY:1,PHONE:0,NOPERSON:0"
+//
+// NOPERSON 필드는 뒤에 추가된 것이라 없어도 파싱된다 — 구버전 RPi 펌웨어가
+// "DROWSY:0,PHONE:0"만 보내도 앞의 두 값은 그대로 살고 자리비움만 0으로 본다.
 //
 // 배선 — RPi GPIO14(물리 8, TX) → IO18(RX) / RPi GPIO15(물리 10, RX) ← IO17(TX)
 //        RPi GND(물리 6 또는 14) — ESP GND  ※ GND 없으면 신호가 깨진다
@@ -51,10 +55,12 @@ const char *rpi_uart_link_str() {
     return s;
 }
 
-// 메인 루프에서 호출. 한 줄씩 파싱해 _drowsy_changed / _phone_changed 를 세운다.
-// 팝업·경고음은 detection_check_alerts() 가 그 플래그를 보고 처리하므로 여기선 관여하지 않는다.
+// 메인 루프에서 호출. 한 줄씩 파싱해 _drowsy_changed / _phone_changed /
+// _no_person_changed 를 세운다. 팝업·경고음·강제 종료는 detection_check_alerts()
+// 가 그 플래그를 보고 처리하므로 여기선 관여하지 않는다.
 void rpi_uart_poll() {
-    static char    buf[32];
+    // "DROWSY:0,PHONE:0,NOPERSON:0" = 27자 — 여유를 두고 48로 잡는다.
+    static char    buf[48];
     static uint8_t len      = 0;
     static bool    overflow = false;
 
@@ -89,15 +95,20 @@ void rpi_uart_poll() {
             continue;
         }
 
-        int d = 0, p = 0;
-        if (sscanf(buf, "DROWSY:%d,PHONE:%d", &d, &p) != 2) {
+        int d = 0, p = 0, n = 0;
+        // NOPERSON까지 있는 3필드 줄을 먼저 시도하고, 2개만 읽히면 구버전 줄로 본다.
+        // 한 번에 %d 셋으로 읽으면 구버전 줄에서 반환값이 2라 통째로 버려진다.
+        int parsed = sscanf(buf, "DROWSY:%d,PHONE:%d,NOPERSON:%d", &d, &p, &n);
+        if (parsed < 2) {
             Serial.printf("[RPi] 알 수 없는 입력: %s\n", buf);
             continue;
         }
+        if (parsed < 3) n = 0;   // 구버전 RPi — 자리비움 정보 없음
         _rpi_det_rx++;
 
-        bool drowsy = (d != 0);
-        bool phone  = (p != 0);
+        bool drowsy    = (d != 0);
+        bool phone     = (p != 0);
+        bool no_person = (n != 0);
 
         if (drowsy != _last_drowsy) {
             _last_drowsy = drowsy;
@@ -110,6 +121,13 @@ void rpi_uart_poll() {
             _new_phone = phone;
             _phone_changed = true;
             aws_detection_send("phone", phone);
+        }
+        // 자리 비움은 focus_session_events의 kind에 없어 서버로 보내지 않는다.
+        // 세션 종료(outcome=interrupted)로만 DB에 남는다.
+        if (no_person != _last_no_person) {
+            _last_no_person = no_person;
+            _new_no_person = no_person;
+            _no_person_changed = true;
         }
     }
 }

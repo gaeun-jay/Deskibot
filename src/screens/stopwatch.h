@@ -12,8 +12,10 @@ struct PauseEvent {
 
 // ─── 백엔드/시간 헬퍼 전방 선언 (나중에 include됨) ──────────────────────────
 void get_iso_now(char *buf, size_t len);
+// outcome은 focus_end 전용이고, 스톱워치는 종료 사유를 구분하지 않으므로
+// 항상 nullptr을 넘겨 서버 기본값(completed)에 맡긴다.
 bool aws_focus_send(const char *mode, const char *action,
-                    int planned_duration_sec);
+                    int planned_duration_sec, const char *outcome);
 
 // ─── 스톱워치 상태 ───────────────────────────────────────────────────────────
 #define SW_IDLE    0
@@ -94,7 +96,7 @@ static void sw_btn_play_cb(lv_event_t *e) {
 
     if (_sw_state == SW_IDLE) {
         // ── start ────────────────────────────────────────────────────────────
-        if (!aws_focus_send("stopwatch", "start", 0)) return;
+        if (!aws_focus_send("stopwatch", "start", 0, nullptr)) return;
         _sw_session_id[0] = '\0';  // focus_state에서 서버 ID를 받는다.
         get_iso_now(_sw_started_at, sizeof(_sw_started_at));
         _sw_state              = SW_RUNNING;
@@ -107,7 +109,7 @@ static void sw_btn_play_cb(lv_event_t *e) {
 
     } else if (_sw_state == SW_PAUSED) {
         // ── resume ───────────────────────────────────────────────────────────
-        if (!aws_focus_send("stopwatch", "resume", 0)) return;
+        if (!aws_focus_send("stopwatch", "resume", 0, nullptr)) return;
         int pause_sec = (int)((millis() - _sw_pause_start_ms) / 1000);
         _sw_total_pause_sec += pause_sec;
 
@@ -130,7 +132,7 @@ static void sw_btn_play_cb(lv_event_t *e) {
 static void sw_btn_pause_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     if (_sw_state != SW_RUNNING) return;
-    if (!aws_focus_send("stopwatch", "pause", 0)) return;
+    if (!aws_focus_send("stopwatch", "pause", 0, nullptr)) return;
 
     // ── pause ─────────────────────────────────────────────────────────────
     _sw_elapsedMs      = millis() - _sw_startMs;
@@ -150,7 +152,7 @@ static void sw_btn_pause_cb(lv_event_t *e) {
 
 static void sw_btn_stop_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    if (!aws_focus_send("stopwatch", "end", 0)) return;
+    if (!aws_focus_send("stopwatch", "end", 0, nullptr)) return;
 
     // ── end (일시정지 상태에서만 호출 가능) ──────────────────────────────────
     int last_pause_sec = (int)((millis() - _sw_pause_start_ms) / 1000);

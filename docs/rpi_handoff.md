@@ -13,7 +13,7 @@
 
 ```
 RPi (카메라 감지)
-  │  UART  "DROWSY:<0|1>,PHONE:<0|1>\n"   ← 이것만 하면 됨
+  │  UART  "DROWSY:<0|1>,PHONE:<0|1>,NOPERSON:<0|1>\n"   ← 이것만 하면 됨
   ▼
 ESP32-S3 ── WSS ──► EC2 ──► PostgreSQL (focus_session_events)
 ```
@@ -73,7 +73,7 @@ Firebase 기록 자리에 콘솔 로그를 남겼습니다. 디바운스 동작�
 
 ---
 
-## 4. UART 프로토콜 (변경 없음 — 이미 맞습니다)
+## 4. UART 프로토콜 (NOPERSON 필드 추가됨)
 
 ```
 포트   /dev/ttyAMA0   115200 8N1
@@ -81,23 +81,67 @@ Firebase 기록 자리에 콘솔 로그를 남겼습니다. 디바운스 동작�
        RPi GPIO15(물리 10, RX) ← ESP IO17(TX)
        GND 공통 필수  ※ 이거 빠지면 신호가 깨집니다 (지난번 브링업 실패 원인)
 
-형식   "DROWSY:<0|1>,PHONE:<0|1>\n"
+형식   "DROWSY:<0|1>,PHONE:<0|1>,NOPERSON:<0|1>\n"
        "PING\n"  →  ESP가 "PONG\n" 회신 (3선 왕복 확인용)
 ```
 
-ESP 쪽 파서는 `sscanf(buf, "DROWSY:%d,PHONE:%d", &d, &p)` 이고, **정확히 2개를 못 읽으면
-그 줄을 버립니다.** 형식이 어긋나면 조용히 무시되니 주의하세요.
+ESP 쪽 파서는
+`sscanf(buf, "DROWSY:%d,PHONE:%d,NOPERSON:%d", &d, &p, &n)` 이고, **2개 미만이 읽히면
+그 줄을 버립니다.** 2개만 읽히면 구버전 RPi 줄로 보고 `NOPERSON=0`으로 처리하므로,
+**새 필드는 반드시 맨 뒤에** 붙여야 합니다. 중간에 끼우면 앞의 두 값이 어긋납니다.
 
 **동작 규칙**
 
 - **값이 바뀔 때만 전송** — 현재 `main.py`가 이미 그렇게 하고 있습니다
   (같은 값을 계속 보내도 ESP가 중복 전송하지 않으니 주기 전송으로 바꿔도 무방)
 - ESP가 `0→1`을 `detection_start`, `1→0`을 `detection_end`로 서버에 전달
+  (DROWSY·PHONE 한정 — NOPERSON은 아래 4.1 참고)
 - WSS가 끊겨 있으면 ESP가 최신 상태를 보관했다가 재연결 후 재전송
-- 32바이트 넘는 줄은 그 줄 전체가 버려집니다
+- 48바이트 넘는 줄은 그 줄 전체가 버려집니다
 
 **RPi는 시각·지속시간을 보내지 않습니다.** 서버가 도착 시점에 `NOW()`로 찍고 지속시간을
 계산합니다. 구간의 시작과 끝만 알려주면 됩니다.
+
+### 4.1 NOPERSON — 감지 이벤트가 아니라 세션 강제 종료 신호
+
+DROWSY·PHONE과 성격이 다릅니다. `focus_session_events.kind`는
+`CHECK (kind IN ('drowsy','phone','pause'))`라 자리 비움을 담을 자리가 없습니다.
+그래서 **ESP는 NOPERSON을 서버로 전달하지 않고, 뽀모도로를 강제 종료하는 데만 씁니다.**
+DB에는 세션 종료 사유로만 남습니다.
+
+| 종료 경로 | ESP가 보내는 outcome | `focus_sessions.status` |
+|---|---|---|
+| 타이머 만료 | `completed` | `completed` |
+| 사용자가 화면 두 번 탭 | `incomplete` | `incomplete` |
+| **자리 비움 5분** | `interrupted` | `interrupted` |
+
+세 값 모두 스키마 CHECK에 이미 있어서 마이그레이션은 필요 없습니다.
+
+**RPi 쪽 판정 규칙** (`main.py`)
+
+```
+raw_no_person = (not has_face) and (not has_pose)
+
+NO_PERSON_RISE_SEC = 2.0    # 2초 연속 비어야 확정
+NO_PERSON_FALL_SEC = 0.0    # 한 프레임이라도 사람이 잡히면 즉시 해제
+NO_PERSON_HOLD_SEC = 300.0  # 확정 상태가 5분 지속되면 ESP에 1을 보낸다
+```
+
+> **rise/fall이 DROWSY·PHONE과 반대인 이유**
+> 저 둘은 *해제*를 늦춰(FALL=2.0) 한 프레임 유실로 감지가 끊기지 않게 합니다.
+> 자리 비움에 같은 방식을 쓰면 위험합니다. 사람이 앉아 있는데 1~2초마다
+> 인식이 한 프레임씩 튀는 경우, 확정 플래그가 계속 True로 유지되고
+> 5분 시계(`raw_false_since` 기준)가 계속 흘러 **멀쩡히 앉아 있는 사용자의
+> 세션을 죽입니다.** 그래서 여기서만 *상승*을 늦추고(RISE=2.0) 해제를
+> 즉시로 둡니다 — 사람이 잡힌 프레임이 하나라도 있으면 시계가 0으로 돌아갑니다.
+
+**뽀모도로 여부는 RPi가 모릅니다.** RPi는 화면 상태와 무관하게 항상 카운트하고,
+`_pomo_state == POMO_RUNNING`일 때만 강제 종료로 해석하는 건 ESP 쪽
+`detection_check_alerts()`입니다. 그래서 UART는 지금처럼 단방향으로 둡니다.
+
+**ESP 화면 동작** — 완료 화면으로 넘기지 않고 진행 화면 위에 회색 스크림을 덮고
+가운데에 "자리 비움으로 종료"를 띄웁니다. 자리를 비운 사람은 몇 초짜리 안내를 볼 수
+없으므로, 돌아와서 화면을 탭하거나 RPi가 `NOPERSON:0`을 보낼 때까지 유지됩니다.
 
 ---
 

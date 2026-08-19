@@ -41,8 +41,9 @@ static int        _notify_todo_count = 0;
 void show_deadline(const char *time_str, const char *title_str, const char *left_str);
 
 // ─── UART 감지 상태 ──────────────────────────────────────────────────────────
-static bool _last_drowsy = false;
-static bool _last_phone  = false;
+static bool _last_drowsy    = false;
+static bool _last_phone     = false;
+static bool _last_no_person = false;
 // ─── voice.h extern 전역 ─────────────────────────────────────────────────────
 char todo_summary[128] = {};  // 오늘 미완료 todos 요약 (음성 컨텍스트)
 char todo_summary_etc[128]        = {};
@@ -210,10 +211,14 @@ void todo_fetch_tasks() {
 }
 
 // ─── 폴링 결과 → 메인 루프 전달용 volatile 변수 ───────────────────────────────
-static volatile bool _drowsy_changed = false;
-static volatile bool _phone_changed  = false;
-static volatile bool _new_drowsy     = false;
-static volatile bool _new_phone      = false;
+static volatile bool _drowsy_changed    = false;
+static volatile bool _phone_changed     = false;
+static volatile bool _new_drowsy        = false;
+static volatile bool _new_phone         = false;
+// 자리 비움은 RPi가 5분 지속을 확인한 뒤에만 1로 올려 보낸다 — ESP는 그 신호를
+// 뽀모도로 진행 중일 때만 강제 종료로 해석한다.
+static volatile bool _no_person_changed = false;
+static volatile bool _new_no_person     = false;
 
 extern AppScreen current_screen;
 
@@ -308,6 +313,31 @@ void detection_check_alerts() {
             if (current_screen == SCREEN_POMODORO) hide_alert();
             _alert_sound_active = false;
         }
+    }
+
+    // ── 자리 비움 (RPi가 5분 지속 확인 후 보고) ─────────────────────────────
+    // 뽀모도로 진행 중일 때만 강제 종료한다. 시계·스톱워치·대기 화면에서 온
+    // 신호는 무시하는데, RPi는 뽀모도로 여부를 모른 채 항상 카운트하기 때문이다.
+    if (_no_person_changed) {
+        _no_person_changed = false;
+        if (_new_no_person) {
+            if (_pomo_state == POMO_RUNNING) {
+                // 자리에 사람이 없으니 졸음/폰 팝업과 경고음은 의미가 없다.
+                hide_alert();
+                _alert_sound_active = false;
+                pomo_away_finish();
+            }
+        } else {
+            // 사람이 돌아왔다 — 안내를 걷고 대기 화면으로.
+            pomo_away_dismiss();
+        }
+    }
+
+    // 돌아온 사용자가 안내를 탭한 경우. LVGL 콜백 안에서 오브젝트를 지우지 않도록
+    // 요청만 세워 두고 여기(메인 루프)에서 처리한다.
+    if (_away_dismiss_req) {
+        _away_dismiss_req = false;
+        pomo_away_dismiss();
     }
 
     // true인 동안 2초마다 반복 재생
