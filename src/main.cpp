@@ -225,6 +225,18 @@ void handle_serial() {
         String title_str = rest.substring(0, last_space);
         String left_str  = rest.substring(last_space + 1);
         show_deadline(time_str.c_str(), title_str.c_str(), left_str.c_str());
+    } else if (input == "voice") {
+        // STT 벤치 녹음용. 터치가 튀면 60발화의 순서가 밀려 파일 이름이 어긋난다.
+        switch_screen(SCREEN_VOICE);
+        Serial.println("[App] 음성 화면으로 전환 — 이제 rec 명령으로 녹음");
+    } else if (input == "rec") {
+        // 녹음 시작/종료 토글. 마이크 버튼과 같은 경로를 탄다.
+        // 상태 라벨이 음성 화면의 LVGL 객체를 참조하므로 다른 화면에서는 막는다.
+        if (current_screen != SCREEN_VOICE) {
+            Serial.println("[App] 음성 화면이 아님 — 먼저 voice 명령을 실행하세요");
+        } else {
+            voice_toggle_record();
+        }
     } else if (input.startsWith("token ")) {
         // 테스트 유저 전환: NVS에 device_token 저장 + WS 재연결 (재플래싱 불필요)
         if (_voice_state != VOICE_IDLE) {

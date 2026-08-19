@@ -11,7 +11,7 @@ set -euo pipefail
 HOST=deskibot-osaka
 APP=/home/ubuntu/Deskibot/server/hw
 STAGE=/tmp/deskibot-hw-deploy
-BACKUP="backups/pre-voice-add-todo"      # 배포 건마다 새 이름을 쓸 것
+BACKUP="backups/pre-clova-switch"      # 배포 건마다 새 이름을 쓸 것
 LOCAL="$(cd "$(dirname "$0")" && pwd)"
 
 echo "── 1. 로컬 검증 ──────────────────────────────────────────"
@@ -23,7 +23,7 @@ echo
 echo "── 2. 전송 ───────────────────────────────────────────────"
 ssh "$HOST" "mkdir -p $STAGE"
 rsync -av \
-    server.py todo_matching.py todo_add.py requirements.txt register_test_device.py \
+    server.py voice_prompt.py audio_codec.py todo_matching.py todo_add.py requirements.txt register_test_device.py \
     "$HOST:$STAGE/"
 
 echo
@@ -37,22 +37,30 @@ if [ -e "$BACKUP" ]; then
 else
     mkdir -p "$BACKUP"
     cp -a server.py todo_matching.py requirements.txt "$BACKUP"/
+    # voice_prompt.py는 이번 배포에서 처음 올라가므로 아직 없을 수 있다
+    for f in voice_prompt.py audio_codec.py; do
+        [ -e "$f" ] && cp -a "$f" "$BACKUP"/ || true
+    done
     echo "[backup] $BACKUP 생성 완료"
 fi
 
 install -m 640 "$STAGE/server.py"             server.py
+install -m 640 "$STAGE/voice_prompt.py"       voice_prompt.py
+install -m 640 "$STAGE/audio_codec.py"        audio_codec.py
 install -m 640 "$STAGE/todo_matching.py"      todo_matching.py
 install -m 640 "$STAGE/todo_add.py"           todo_add.py
 install -m 640 "$STAGE/requirements.txt"      requirements.txt
 install -m 750 "$STAGE/register_test_device.py" register_test_device.py
 
 .venv/bin/pip install -q -r requirements.txt
-.venv/bin/python -m py_compile server.py todo_matching.py todo_add.py
-.venv/bin/python -c 'import todo_add, todo_matching; print("[check] import ok")'
+.venv/bin/python -m py_compile server.py voice_prompt.py audio_codec.py todo_matching.py todo_add.py
+.venv/bin/python -c 'import todo_add, todo_matching, voice_prompt, audio_codec; assert len(voice_prompt.TOOLS) == 4; assert audio_codec.ulaw_to_pcm16(bytes([0xFF])) == bytes(2); print("[check] import ok")'
 
 rollback() {
     echo "[rollback] 실패 감지 — $BACKUP 으로 되돌린다" >&2
     cp -a "$BACKUP"/server.py        server.py
+    cp -a "$BACKUP"/voice_prompt.py  voice_prompt.py 2>/dev/null || true
+    cp -a "$BACKUP"/audio_codec.py   audio_codec.py  2>/dev/null || true
     cp -a "$BACKUP"/todo_matching.py todo_matching.py
     cp -a "$BACKUP"/requirements.txt requirements.txt
     sudo systemctl restart deskibot-hw.service || true

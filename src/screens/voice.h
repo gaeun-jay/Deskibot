@@ -13,6 +13,15 @@
 #include "deskibot_tls.h"
 
 #define VOICE_SERVER_URL "https://api.deskibot.co.kr/hw/process"
+// 스트리밍 업로드는 HTTPClient를 못 쓰고 TLS 소켓에 직접 쓰므로 분리해 둔다.
+#define VOICE_SERVER_HOST "api.deskibot.co.kr"
+#define VOICE_SERVER_PATH "/hw/process"
+
+// 스트리밍 업로드. 기능은 동작하고 체감 지연을 8.6초까지 줄였지만, TLS 컨텍스트를
+// 하나 더 잡는 바람에 내부 힙의 '연속 블록'이 24.5KB까지 말라 다른 TLS 연결
+// (WebSocket·HTTPClient)이 실패했다. 메모리 여유가 생기기 전까지는 끈다.
+// 0이면 관련 코드가 통째로 컴파일에서 빠져 정적 메모리도 반환된다.
+#define VOICE_STREAM_UPLOAD 0
 
 // aws_backend.h가 관리하는 NVS device token의 스레드 안전 복사 API.
 bool aws_get_device_token(char *out, size_t out_len);
@@ -335,63 +344,254 @@ static bool _read_exact(NetworkClient *c, uint8_t *dst, uint32_t n) {
     return got == n;
 }
 
-// ─── 서버 전송 → STT/LLM/TTS 수신 ───────────────────────────────────────────
-static void _send_to_server() {
-    // 전송·수신을 한 문구로 묶는다. 단계를 나눠 보여줘도 사용자가 할 수 있는 게
-    // 없고, 문구가 바뀌면 오히려 뭔가 잘못된 것처럼 보였다.
-    // (문구를 바꿀 때는 pretendard_medium_25 서브셋에 글자가 있는지 반드시 확인)
-    // 2번째 줄 앞 스페이스 4개는 오타가 아니라 광학 정렬용이다. 끝의 " ⋯"가
-    // 25.9px를 차지해 중앙 계산에 들어가는 바람에 "데스키봇"이 12.9px 오른쪽으로
-    // 치우쳐 보였다. 같은 폭을 왼쪽에 넣어 두 줄의 보이는 글자를 함께 중앙에 둔다.
-    _voice_set_status("데스키봇\n    응답 준비중 ⋯");
-    Serial.printf("\n[Server] POST %s (%d bytes, %.1f초)\n",
-                  VOICE_SERVER_URL,
-                  _rec_bytes, (float)_rec_bytes / (VOICE_SAMPLE_RATE * 2));
+// 녹음 태스크가 첫 발화를 감지하면 켠다. 업로더는 이걸 보고 전송을 시작해
+// 앞쪽 무음을 건너뛴다(머리 트림).
+static volatile bool     signal_seen_flag  = false;
+// 신호가 처음 잡힌 지점(샘플 인덱스). 업로더가 연결하느라 늦게 깨어나도
+// 여기서부터 보내야 발화 앞부분을 잃지 않는다.
+static volatile uint32_t signal_first_sample = 0;
 
+#if VOICE_STREAM_UPLOAD
+// 아래 업로더가 쓰는 두 함수는 정의가 뒤에 있어 전방 선언한다.
+static inline uint8_t _lin2ulaw(int16_t pcm);
+static bool _recv_body(NetworkClient *wifi_stream, int resp_total);
+
+// ─── 스트리밍 업로드 ─────────────────────────────────────────────────────────
+// 녹음이 끝난 뒤 통째로 올리면 발화 길이만큼 대기가 생긴다(6.2초 발화 → 업로드
+// 4.0초). 녹음과 동시에 흘려보내면 그 대기가 사라진다.
+//
+// 별도 태스크로 돌리는 이유: 4KB 청크 TLS 쓰기가 ~170ms 걸리는데, 녹음 루프
+// 안에서 하면 그동안 i2s_channel_read를 못 해 DMA가 넘치고 오디오가 끊긴다.
+// 녹음 태스크는 _rec_bytes만 늘리고, 업로더는 그 아래 구간만 읽는다 —
+// 한쪽만 쓰고 한쪽만 읽으므로 뮤텍스가 필요 없다.
+#define UP_CHUNK_SAMPLES    4096                      // µ-law 4KB / PCM 8KB
+#define UP_PREROLL_SAMPLES  (VOICE_SAMPLE_RATE * 3 / 10)   // 머리 트림 여유 300ms
+
+static WiFiClientSecure  _up_tls;
+static volatile uint32_t _up_sent      = 0;      // 이미 보낸 샘플 수
+static volatile bool     _up_open      = false;  // 연결·헤더 전송 완료
+static volatile bool     _up_failed    = false;
+static volatile bool     _up_finishing = false;  // 녹음 종료 — 잔량만 밀어내면 됨
+static TaskHandle_t      _up_task      = nullptr;
+static StaticTask_t      _up_task_tcb;
+static StackType_t       _up_task_stack[8192];
+static uint8_t           _up_chunk[UP_CHUNK_SAMPLES];
+
+// 녹음 시작 시점에 연결과 헤더까지 끝내둔다. TLS 핸드셰이크(~0.5초)가 사용자가
+// 말하기 시작하는 구간과 겹쳐서 체감에서 사라진다.
+static bool _upload_open_conn() {
     char device_token[128] = {};
     if (!aws_get_device_token(device_token, sizeof(device_token))) {
-        Serial.println("[Server] NVS device_token 미설정 — 음성 요청 취소");
-        _rec_bytes = 0;
+        Serial.println("[UP] NVS device_token 미설정 — 스트리밍 취소");
+        return false;
+    }
+    _up_tls.setCACert(DESKIBOT_ROOT_CA);
+    _up_tls.setTimeout(30);
+    if (!_up_tls.connect(VOICE_SERVER_HOST, 443)) {
+        Serial.println("[UP] ❌ TLS 연결 실패");
+        return false;
+    }
+    // 녹음이 끝나야 길이를 알 수 있으므로 chunked로 보낸다.
+    _up_tls.printf("POST %s HTTP/1.1\r\n", VOICE_SERVER_PATH);
+    _up_tls.printf("Host: %s\r\n", VOICE_SERVER_HOST);
+    _up_tls.print("Content-Type: application/octet-stream\r\n");
+    _up_tls.print("X-Audio-Encoding: mulaw\r\n");
+    _up_tls.printf("X-Device-Key: %s\r\n", device_token);
+    if (_pending_todo_content[0]) {
+        _up_tls.printf("X-Pending-Content: %s\r\n", _pending_todo_content);
+        _up_tls.printf("X-Pending-Date: %s\r\n",    _pending_todo_date);
+    }
+    _up_tls.print("Transfer-Encoding: chunked\r\n");
+    _up_tls.print("Connection: close\r\n\r\n");
+    return true;
+}
+
+// _rec_buf[from..to)를 µ-law로 인코딩해 청크 하나로 보낸다.
+static bool _upload_send_range(uint32_t from, uint32_t to) {
+    while (from < to) {
+        uint32_t n = min((uint32_t)UP_CHUNK_SAMPLES, to - from);
+        for (uint32_t i = 0; i < n; i++) _up_chunk[i] = _lin2ulaw(_rec_buf[from + i]);
+        if (_up_tls.printf("%X\r\n", (unsigned)n) <= 0) return false;
+        if (_up_tls.write(_up_chunk, n) != n)             return false;
+        if (_up_tls.print("\r\n") <= 0)                  return false;
+        from += n;
+        _up_sent = from;
+    }
+    return true;
+}
+
+static void _upload_task(void *arg) {
+    // TLS 핸드셰이크는 반드시 이 태스크(코어 0)에서 한다. 버튼 콜백에서 하면
+    // UI 스레드가 0.5~1초 멈춰 터치가 씹힌다.
+    if (!_upload_open_conn()) {
+        _up_failed = true;
+        _up_task = nullptr;
+        vTaskDelete(NULL);
         return;
     }
+    _up_open = true;
 
-    WiFiClientSecure wifi_client;
-    wifi_client.setCACert(DESKIBOT_ROOT_CA);
-    HTTPClient  http;
-    http.begin(wifi_client, VOICE_SERVER_URL);
-    http.addHeader("Content-Type", "application/octet-stream");
-    http.addHeader("X-Device-Key", device_token);
-    if (_pending_todo_content[0]) {
-        http.addHeader("X-Pending-Content", _pending_todo_content);
-        http.addHeader("X-Pending-Date",    _pending_todo_date);
-        Serial.printf("[Voice] 역질문 컨텍스트 전송: '%s' / %s\n",
-                      _pending_todo_content, _pending_todo_date);
+    // 머리 트림: 신호가 잡히기 전의 무음은 보내지 않는다. 꼬리 트림은 끝을 미리
+    // 알 수 없어 포기한다 — 대신 전송이 녹음과 겹쳐서 총 시간은 더 짧다.
+    while (!_up_failed && !signal_seen_flag && !_up_finishing) vTaskDelay(pdMS_TO_TICKS(20));
+
+    // 지금 위치가 아니라 '신호가 처음 잡힌 위치'를 기준으로 삼는다. TLS 연결에
+    // 수 초가 걸리는 동안 녹음된 발화를 무음으로 오인해 버리지 않기 위함이다.
+    uint32_t first = signal_first_sample;
+    _up_sent = (first > UP_PREROLL_SAMPLES) ? first - UP_PREROLL_SAMPLES : 0;
+    Serial.printf("[UP] 전송 시작 (머리 %.2f초 건너뜀)\n",
+                  (float)_up_sent / VOICE_SAMPLE_RATE);
+
+    while (!_up_failed) {
+        uint32_t avail = _rec_bytes / sizeof(int16_t);
+        if (avail > _up_sent) {
+            if (!_upload_send_range(_up_sent, avail)) {
+                Serial.println("[UP] ❌ 청크 전송 실패");
+                _up_failed = true;
+                break;
+            }
+        } else if (_up_finishing) {
+            break;                       // 녹음 끝 + 잔량 없음
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
     }
-    http.setTimeout(30000);
+    _up_task = nullptr;
+    vTaskDelete(NULL);
+}
 
-    uint32_t t0   = millis();
-    int      code = http.POST((uint8_t *)_rec_buf, _rec_bytes);
-    Serial.printf("[Server] HTTP %d (%.1fs)\n", code, (millis() - t0) / 1000.0f);
+// 태스크만 띄우고 즉시 돌아온다. 연결은 태스크가 알아서 한다.
+static bool _upload_begin() {
+    _up_sent = 0; _up_failed = false; _up_finishing = false; _up_open = false;
+    signal_first_sample = 0;
+    _up_task = xTaskCreateStaticPinnedToCore(
+        _upload_task, "up", sizeof(_up_task_stack) / sizeof(StackType_t),
+        NULL, 4, _up_task_stack, &_up_task_tcb, 0);   // 녹음(코어1)과 분리
+    if (!_up_task) {
+        Serial.println("[UP] ❌ 업로더 태스크 생성 실패");
+        _up_tls.stop(); _up_failed = true; return false;
+    }
+    return true;
+}
+
+// 상태줄 + 헤더를 읽어 코드와 X-Server-Time을 뽑는다. HTTPClient를 못 쓰므로
+// 직접 파싱한다.
+static int _upload_read_head(float *srv_time, int *content_len) {
+    *srv_time = 0; *content_len = -1;
+    // Stream 타임아웃에 기대면 서버가 응답하기도 전에 빈 문자열을 받는다.
+    // 서버 처리에 3~6초가 걸리므로 직접 기다린다.
+    uint32_t dl = millis() + 40000;
+    while (!_up_tls.available() && _up_tls.connected() && millis() < dl)
+        vTaskDelay(pdMS_TO_TICKS(20));
+    if (!_up_tls.available()) {
+        Serial.println("[UP] ❌ 응답 없음 (타임아웃)");
+        return -1;
+    }
+    String status = _up_tls.readStringUntil('\n');
+    int sp = status.indexOf(' ');
+    int code = (sp > 0) ? status.substring(sp + 1, sp + 4).toInt() : -1;
+    while (true) {
+        String line = _up_tls.readStringUntil('\n');
+        line.trim();
+        if (line.length() == 0) break;
+        if (line.startsWith("X-Server-Time:"))
+            *srv_time = line.substring(14).toFloat();
+        else if (line.startsWith("Content-Length:"))
+            *content_len = line.substring(15).toInt();
+        else if (line.startsWith("X-Stage-Times:"))
+            Serial.printf("[LAT]   서버 단계  : %s\n", line.substring(14).c_str());
+    }
+    return code;
+}
+
+
+// 녹음 종료 후: 잔량을 밀어내고 종료 청크를 보낸 뒤 응답을 받는다.
+// 실패하면 false를 돌려주고, 호출부가 기존 일괄 전송으로 되돌아간다.
+// 반환값:
+//   UP_OK          응답까지 정상 수신
+//   UP_RETRY_SAFE  종료 청크 전에 끊김 — 서버가 실행했을 리 없으니 재전송 가능
+//   UP_SPENT       요청은 이미 서버에 도달했고 응답만 못 받음 — 재전송 금지.
+//                  다시 보내면 add_todo·delete_todo가 두 번 실행된다.
+enum UploadResult { UP_OK, UP_RETRY_SAFE, UP_SPENT };
+
+static UploadResult _upload_finish() {
+    _up_finishing = true;
+    uint32_t t_wait = millis();
+    while (_up_task && millis() - t_wait < 20000) vTaskDelay(pdMS_TO_TICKS(10));
+
+    if (_up_failed || !_up_open) { _up_tls.stop(); return UP_RETRY_SAFE; }
+
+    _up_tls.print("0\r\n\r\n");                 // 종료 청크 — 이 시점부터 재전송 금지
+    uint32_t sent_bytes = _up_sent;               // µ-law는 샘플당 1바이트
+    Serial.printf("[UP] 전송 완료: %u bytes µ-law (%.1f초)\n",
+                  sent_bytes, (float)sent_bytes / VOICE_SAMPLE_RATE);
+
+    uint32_t t0 = millis();
+    float srv_time; int content_len;
+    int code = _upload_read_head(&srv_time, &content_len);
+    uint32_t wait_ms = millis() - t0;
 
     if (code != 200) {
-        Serial.printf("[Server] ❌ 실패 (code=%d)\n", code);
-        http.end();
-        _rec_bytes = 0;
-        return;
+        Serial.printf("[UP] ❌ HTTP %d — 서버는 이미 처리했을 수 있어 재전송하지 않는다\n", code);
+        _up_tls.stop();
+        return UP_SPENT;
     }
+    Serial.println("\n[LAT] ====== 구간별 소요 ======");
+    Serial.printf("[LAT]   업로드      : 녹음과 동시 진행 (%u bytes)\n", sent_bytes);
+    Serial.printf("[LAT]   응답 대기   : %.2fs (서버 처리 %.2fs)\n",
+                  wait_ms / 1000.0f, srv_time);
 
-    int resp_total = http.getSize();
-    NetworkClient *wifi_stream = http.getStreamPtr();
-    // 2번째 줄 앞 스페이스 4개는 오타가 아니라 광학 정렬용이다. 끝의 " ⋯"가
-    // 25.9px를 차지해 중앙 계산에 들어가는 바람에 "데스키봇"이 12.9px 오른쪽으로
-    // 치우쳐 보였다. 같은 폭을 왼쪽에 넣어 두 줄의 보이는 글자를 함께 중앙에 둔다.
-    _voice_set_status("데스키봇\n    응답 준비중 ⋯");
+    // 이후 본문 형식은 기존과 동일하다 — 같은 파서를 그대로 쓴다.
+    uint32_t t_body = millis();
+    if (!_recv_body(&_up_tls, content_len)) { _up_tls.stop(); return UP_SPENT; }
+    Serial.printf("[LAT]   본문 수신   : %.2fs\n", (millis() - t_body) / 1000.0f);
+    Serial.println("[LAT] ==============================\n");
+    _up_tls.stop();
+    return UP_OK;
+}
 
+#endif  // VOICE_STREAM_UPLOAD
+
+// ─── 서버 전송 → STT/LLM/TTS 수신 ───────────────────────────────────────────
+// ─── µ-law 인코딩 ────────────────────────────────────────────────────────────
+// 업로드를 절반으로 줄인다(16-bit PCM 32KB/s → 8-bit µ-law 16KB/s). 손실 압축이라
+// 90발화로 인식률 영향을 실측했고 Google −0.008 / CLOVA +0.001로 유의차가 없었다.
+// 원거리(1 m) 조건에서도 악화가 없다 — µ-law는 로그 압신이라 작은 진폭에서도
+// SNR을 유지한다.
+static inline uint8_t _lin2ulaw(int16_t pcm) {
+    static const int16_t SEG_UEND[8] =
+        {0x3F, 0x7F, 0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF, 0x1FFF};
+    int32_t v = pcm >> 2;                 // 16비트 → 14비트
+    uint8_t mask;
+    if (v < 0) { v = -v; mask = 0x7F; } else { mask = 0xFF; }
+    if (v > 8159) v = 8159;
+    v += 0x84 >> 2;
+    int seg = 8;
+    for (int i = 0; i < 8; i++) {
+        if (v <= SEG_UEND[i]) { seg = i; break; }
+    }
+    if (seg >= 8) return (uint8_t)(0x7F ^ mask);
+    return (uint8_t)((((seg << 4) | ((v >> (seg + 1)) & 0x0F)) ^ mask) & 0xFF);
+}
+
+// _rec_buf를 제자리에서 µ-law로 바꾼다. 출력이 입력의 절반이라 앞에서부터
+// 덮어써도 아직 안 읽은 샘플을 건드리지 않는다. 원본 PCM은 전송 후 쓰지 않는다.
+static uint32_t _encode_ulaw_inplace(uint32_t pcm_bytes) {
+    const uint32_t n = pcm_bytes / sizeof(int16_t);
+    uint8_t *dst = (uint8_t *)_rec_buf;
+    for (uint32_t i = 0; i < n; i++) dst[i] = _lin2ulaw(_rec_buf[i]);
+    return n;
+}
+
+
+// 응답 본문 파싱. 일괄 전송과 스트리밍 업로드가 같은 형식을 받으므로
+// 두 경로가 이 함수를 공유한다.
+static bool _recv_body(NetworkClient *wifi_stream, int resp_total) {
     // 1. STT 결과
     uint32_t t_len = 0;
     if (!_read_exact(wifi_stream, (uint8_t *)&t_len, 4)) {
         Serial.println("[Server] ❌ STT 길이 수신 실패");
-        http.end(); _rec_bytes = 0; return;
+        return false;
     }
     if (t_len > 0 && t_len < 512) {
         char *tbuf = (char *)malloc(t_len + 1);
@@ -405,7 +605,7 @@ static void _send_to_server() {
     uint32_t r_len = 0;
     if (!_read_exact(wifi_stream, (uint8_t *)&r_len, 4)) {
         Serial.println("[Server] ❌ CMD 길이 수신 실패");
-        http.end(); _rec_bytes = 0; return;
+        return false;
     }
     if (r_len > 0 && r_len < 512) {
         char *rbuf = (char *)malloc(r_len + 1);
@@ -440,7 +640,7 @@ static void _send_to_server() {
     uint32_t audio_len = (resp_total >= 0) ? (resp_total - 4 - t_len - 4 - r_len) : 0;
     if (audio_len == 0 || audio_len > VOICE_MAX_BUF_BYTES) {
         Serial.printf("[Server] ❌ 오디오 길이 이상: %d\n", audio_len);
-        http.end(); _rec_bytes = 0; return;
+        return false;
     }
 
     _voice_set_status("데스키봇이\n말하고 있어요");
@@ -453,6 +653,92 @@ static void _send_to_server() {
         else delay(10);
     }
     _rec_bytes = received;
+    return true;
+}
+
+static void _send_to_server() {
+    // 전송·수신을 한 문구로 묶는다. 단계를 나눠 보여줘도 사용자가 할 수 있는 게
+    // 없고, 문구가 바뀌면 오히려 뭔가 잘못된 것처럼 보였다.
+    // (문구를 바꿀 때는 pretendard_medium_25 서브셋에 글자가 있는지 반드시 확인)
+    // 2번째 줄 앞 스페이스 4개는 오타가 아니라 광학 정렬용이다. 끝의 " ⋯"가
+    // 25.9px를 차지해 중앙 계산에 들어가는 바람에 "데스키봇"이 12.9px 오른쪽으로
+    // 치우쳐 보였다. 같은 폭을 왼쪽에 넣어 두 줄의 보이는 글자를 함께 중앙에 둔다.
+    _voice_set_status("데스키봇\n    응답 준비중 ⋯");
+    Serial.printf("\n[Server] POST %s (%d bytes, %.1f초)\n",
+                  VOICE_SERVER_URL,
+                  _rec_bytes, (float)_rec_bytes / (VOICE_SAMPLE_RATE * 2));
+
+    char device_token[128] = {};
+    if (!aws_get_device_token(device_token, sizeof(device_token))) {
+        Serial.println("[Server] NVS device_token 미설정 — 음성 요청 취소");
+        _rec_bytes = 0;
+        return;
+    }
+
+    WiFiClientSecure wifi_client;
+    wifi_client.setCACert(DESKIBOT_ROOT_CA);
+    HTTPClient  http;
+    http.begin(wifi_client, VOICE_SERVER_URL);
+    http.addHeader("Content-Type", "application/octet-stream");
+    http.addHeader("X-Device-Key", device_token);
+    http.addHeader("X-Audio-Encoding", "mulaw");
+    if (_pending_todo_content[0]) {
+        http.addHeader("X-Pending-Content", _pending_todo_content);
+        http.addHeader("X-Pending-Date",    _pending_todo_date);
+        Serial.printf("[Voice] 역질문 컨텍스트 전송: '%s' / %s\n",
+                      _pending_todo_content, _pending_todo_date);
+    }
+    http.setTimeout(30000);
+
+    // 서버가 자기 처리 시간을 헤더로 알려준다. 왕복에서 그걸 빼면 순수 네트워크
+    // 시간이 남는다 — 업로드가 병목인지 서버가 병목인지 이걸로 갈린다.
+    const char *timing_hdrs[] = {"X-Server-Time", "X-Stage-Times"};
+    http.collectHeaders(timing_hdrs, 2);
+
+    // 보내기 직전에 µ-law로 줄인다. _rec_bytes는 응답 수신에 다시 쓰이므로
+    // 인코딩 길이는 따로 들고 있는다.
+    uint32_t t_enc  = millis();
+    uint32_t ul_len = _encode_ulaw_inplace(_rec_bytes);
+    Serial.printf("[µlaw] %u → %u bytes (%ums)\n",
+                  _rec_bytes, ul_len, (unsigned)(millis() - t_enc));
+
+    uint32_t t0   = millis();
+    int      code = http.POST((uint8_t *)_rec_buf, ul_len);
+    uint32_t rt_ms = millis() - t0;
+    Serial.printf("[Server] HTTP %d (%.1fs)\n", code, rt_ms / 1000.0f);
+
+    if (code != 200) {
+        Serial.printf("[Server] ❌ 실패 (code=%d)\n", code);
+        http.end();
+        _rec_bytes = 0;
+        return;
+    }
+
+    // ── 구간 계측 ────────────────────────────────────────────────────────────
+    float srv_s = http.header("X-Server-Time").toFloat();
+    float net_s = rt_ms / 1000.0f - srv_s;          // 업로드 + 왕복 지연 + 헤더
+    Serial.println("\n[LAT] ====== 구간별 소요 ======");
+    Serial.printf("[LAT]   업로드 크기 : %u bytes µ-law (%.1f초 오디오)\n",
+                  ul_len, (float)ul_len / VOICE_SAMPLE_RATE);
+    Serial.printf("[LAT]   POST 왕복   : %.2fs\n", rt_ms / 1000.0f);
+    Serial.printf("[LAT]   ├ 서버 처리 : %.2fs  (%s)\n", srv_s,
+                  http.header("X-Stage-Times").c_str());
+    Serial.printf("[LAT]   └ 네트워크  : %.2fs  <- 업로드 병목 여부\n", net_s);
+
+    uint32_t t_body = millis();
+    int resp_total = http.getSize();
+    NetworkClient *wifi_stream = http.getStreamPtr();
+    // 2번째 줄 앞 스페이스 4개는 오타가 아니라 광학 정렬용이다. 끝의 " ⋯"가
+    // 25.9px를 차지해 중앙 계산에 들어가는 바람에 "데스키봇"이 12.9px 오른쪽으로
+    // 치우쳐 보였다. 같은 폭을 왼쪽에 넣어 두 줄의 보이는 글자를 함께 중앙에 둔다.
+    _voice_set_status("데스키봇\n    응답 준비중 ⋯");
+
+    if (!_recv_body(wifi_stream, resp_total)) {
+        http.end(); _rec_bytes = 0; return;
+    }
+    Serial.printf("[LAT]   본문 수신   : %.2fs (%u bytes)\n",
+                  (millis() - t_body) / 1000.0f, _rec_bytes);
+    Serial.println("[LAT] ==============================\n");
     http.end();
 
     float dur = (float)_rec_bytes / (VOICE_SAMPLE_RATE * 2);
@@ -560,7 +846,11 @@ static void _record_task(void *arg) {
             int32_t v = abs(buf32[i] >> 16);
             if (v > peak_max) peak_max = v;
             if (v > total_peak) total_peak = v;
-            if (v > 10) signal_seen = true;
+            if (v > 10 && !signal_seen) {
+                signal_seen = true;
+                signal_first_sample = _rec_bytes / sizeof(int16_t);
+                signal_seen_flag = true;
+            }
         }
 
         // 버퍼에 저장
@@ -624,13 +914,28 @@ static void _record_task(void *arg) {
     }
     Serial.println("[REC] ============================\n");
 
-    _rec_bytes = _trim_silence(_rec_buf, _rec_bytes);
-
     // ── 파이프라인: 서버 전송 → STT/LLM/TTS 수신 → 자동 재생 ─────────────────
     if (_rec_bytes > 0 && WiFi.status() == WL_CONNECTED) {
         _pipeline_start_ms = millis();  // 딜레이 측정 시작
         _voice_state = VOICE_PROCESSING;
+#if VOICE_STREAM_UPLOAD
+        // 스트리밍이 살아 있으면 잔량만 밀어내면 끝이다. 실패했으면 트림 후
+        // 기존 일괄 전송으로 되돌아간다 — 오디오는 버퍼에 그대로 남아 있다.
+        UploadResult ur = _upload_finish();
+        if (ur == UP_RETRY_SAFE) {
+            Serial.println("[UP] 미도달 — 일괄 전송으로 폴백");
+            _rec_bytes = _trim_silence(_rec_buf, _rec_bytes);
+            _send_to_server();
+        } else if (ur == UP_SPENT) {
+            // 서버가 이미 실행했을 수 있으므로 재전송하면 중복 실행이 된다.
+            Serial.println("[UP] ❌ 응답 수신 실패 — 중복 실행 방지를 위해 재전송하지 않음");
+            _rec_bytes = 0;
+            _voice_set_status("응답을 받지 못했어요\n다시 시도해 주세요");
+        }
+#else
+        _rec_bytes = _trim_silence(_rec_buf, _rec_bytes);
         _send_to_server();
+#endif
 
         if (_rec_bytes > 0) {
             _voice_state = VOICE_PLAYING;
@@ -849,9 +1154,11 @@ void voice_check_state() {
     }
 }
 
-// ─── 버튼 콜백 ───────────────────────────────────────────────────────────────
-static void _voice_btn_mic_cb(lv_event_t *e) {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+// ─── 녹음 토글 ───────────────────────────────────────────────────────────────
+// 마이크 버튼과 시리얼 `rec` 명령이 같은 경로를 타도록 콜백에서 분리했다.
+// STT 벤치는 60발화 × 시작/종료로 120번을 눌러야 하는데, 터치가 한 번이라도
+// 튀면 녹음 순서가 밀려 파일 이름이 전부 어긋난다.
+void voice_toggle_record() {
     if (!_rec_buf) {
         Serial.println("[Voice] ❌ 버퍼 없음 — voice_audio_init 실패했을 가능성");
         return;
@@ -861,6 +1168,13 @@ static void _voice_btn_mic_cb(lv_event_t *e) {
         Serial.println("[Voice] 🎙️ 녹음 버튼 눌림 → 녹음 시작");
         _voice_state = VOICE_RECORDING;
         _rec_start_ms = millis();
+        signal_seen_flag = false;
+#if VOICE_STREAM_UPLOAD
+        // 녹음과 동시에 올린다. TLS 핸드셰이크(~0.5초)가 사용자가 말을 시작하는
+        // 구간과 겹쳐 체감에서 사라진다. 실패하면 기존 일괄 전송으로 되돌아간다.
+        if (WiFi.status() == WL_CONNECTED && !_upload_begin())
+            Serial.println("[UP] 스트리밍 실패 — 일괄 전송으로 진행");
+#endif
         _voice_set_status("사용자님의 음성을\n인식하고 있어요");
         _voice_task_handle = xTaskCreateStaticPinnedToCore(
             _record_task, "rec",
@@ -884,6 +1198,13 @@ static void _voice_btn_mic_cb(lv_event_t *e) {
     } else {
         Serial.printf("[Voice] 녹음 버튼 무시 (현재 상태: %d)\n", _voice_state);
     }
+}
+
+
+// ─── 버튼 콜백 ───────────────────────────────────────────────────────────────
+static void _voice_btn_mic_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    voice_toggle_record();
 }
 
 // ─── UI 생성 ──────────────────────────────────────────────────────────────────
