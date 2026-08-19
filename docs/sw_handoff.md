@@ -308,6 +308,31 @@ SW팀이 같은 서버를 건드릴 때 **깨면 안 되는 부분**입니다.
 않는 쪽을 골랐습니다. 이벤트 단위 기록이 필요해지면 그때 `kind`에
 `no_person` 추가를 요청드리겠습니다.
 
+##### 요청: 분석용 뷰 하나만 적용 부탁드립니다
+
+`incomplete` / `interrupted`가 로그 분석에서 한눈에 안 읽혀서, **값은 그대로 두고
+이름만 붙이는 읽기 전용 뷰**를 준비했습니다. 파일은 HW 쪽 레포에 있습니다:
+
+```
+esp 브랜치 → server/sql/004_focus_outcome_view.sql
+```
+
+`database/` 시퀀스의 `004`로 옮겨 적용해 주시면 됩니다. 뷰 하나 추가라 기존
+테이블·제약·앱 어느 쪽도 건드리지 않습니다.
+
+| `status` | 뷰의 `end_reason` |
+|---|---|
+| `completed` | `timer_completed` |
+| `incomplete` | `user_stopped` |
+| `interrupted` | `no_user` |
+| `in_progress` | `NULL` |
+
+**`status` 값 자체를 `user_stopped` 같은 이름으로 바꾸는 건 하지 말아 주세요.**
+`FINAL_STATUSES`가 모르는 값을 `invalid_outcome`으로 거부해 `focus_end`가 실패하고,
+세션이 `in_progress`로 남아 `uq_focus_sessions_one_active_per_user`에 걸리면서
+다음 세션 시작까지 막힙니다. 앱 `timer_service.dart`의 3분기도 모르는 값을
+'진행 중'으로 표시합니다.
+
 **그 외 주의점**
 
 - 일시정지 누적 필드명은 `total_pause_duration_sec`입니다 (`total_pause_sec` 아님)
