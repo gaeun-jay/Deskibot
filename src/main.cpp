@@ -196,6 +196,19 @@ void handle_serial() {
         show_alert(ALERT_DROWSY);
     } else if (input == "popup phone") {
         show_alert(ALERT_PHONE);
+    } else if (input == "popup away") {
+        // 자리 비움 종료 화면 미리보기.
+        // WiFi가 없으면 focus_start가 WS 미연결로 실패해 뽀모도로 자체가 시작되지
+        // 않으므로, 실제 조작만으로는 이 화면에 도달할 수 없다. 그래서 로컬 상태만
+        // 진행 중으로 만들어 두고 실제 종료 경로(pomo_away_finish)를 그대로 탄다.
+        // 그 안의 focus_end는 session_id가 없어 조용히 취소되고 화면만 남는다.
+        if (current_screen != SCREEN_POMODORO) switch_screen(SCREEN_POMODORO);
+        _pomo_state     = POMO_RUNNING;
+        _pomo_totalSec  = 25 * 60;
+        _pomo_remainSec = 13 * 60 + 42;   // 남은 시간이 보이도록 적당한 값
+        _pomo_update_timer_label();
+        _pomo_update_ui();
+        pomo_away_finish();
     } else if (input == "popup deadline") {
         show_deadline("09:00 PM", "알고리즘 과제", "30분");
     } else if (input.startsWith("deadline ")) {
