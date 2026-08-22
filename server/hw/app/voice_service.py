@@ -24,8 +24,6 @@ from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
-from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -39,6 +37,8 @@ from app.todo_add import (
 from app.todo_matching import select_todo_candidate
 from app.voice_prompt import TOOLS, build_system_prompt
 from app.audio_codec import ulaw_to_pcm16
+from common.db import make_pool
+from common.device_auth import authenticate_device as common_authenticate_device
 
 # .env 는 패키지 밖(server/hw/)에 있다. 실행 위치에 기대지 않도록 명시한다 —
 # uvicorn 을 어디서 띄우든 같은 파일을 읽는다. sw 서버와 같은 방식이다.
@@ -97,62 +97,19 @@ _google_opts = ClientOptions(api_key=GOOGLE_API_KEY)
 _stt_client  = speech.SpeechClient(client_options=_google_opts)
 _tts_client  = texttospeech.TextToSpeechClient(client_options=_google_opts)
 
-_db_env = {
-    "host": DB_HOST,
-    "port": DB_PORT,
-    "dbname": DB_NAME,
-    "user": DB_USER,
-    "password": DB_PASSWORD,
-}
-_missing_db_env = [name for name, value in _db_env.items() if not value]
-if _missing_db_env:
-    raise RuntimeError("missing PostgreSQL settings: " + ", ".join(_missing_db_env))
-try:
-    _db_env["port"] = int(DB_PORT)
-except ValueError as exc:
-    raise RuntimeError("DB_PORT must be an integer") from exc
-_db_env["row_factory"] = dict_row
-
-# check: 빌려주기 전에 커넥션이 살아있는지 확인한다. 로봇이 몇 시간 조용하면
-# 놀던 커넥션이 죽는데, 이게 없으면 침묵 뒤 첫 요청만 503으로 실패하고
-# 그 다음부터 정상이 된다. 시연에서 첫 호출이 튕기는 형태로 나타난다.
-# max_idle: 애초에 죽을 때까지 방치하지 않도록 5분마다 재활용한다.
-db_pool = ConnectionPool(
-    conninfo="",
-    kwargs=_db_env,
-    min_size=1,
-    max_size=5,
-    open=True,
-    check=ConnectionPool.check_connection,
-    max_idle=300,
-)
+db_pool = make_pool("deskibot-hw")
 print("[PostgreSQL] ✅ device 인증 풀 연결 완료", flush=True)
 
 # ─── HW device 인증 ───────────────────────────────────────────────────────────
 def authenticate_device(token: str) -> UUID | None:
-    """device token 을 검증하고 연결된 user_id 를 반환한다.
+    """device token 을 검증하고 user_id 를 반환한다.
 
-    HTTP 계층에서 헤더를 꺼내 넘긴다. 이 함수가 request 를 직접 보지 않으므로
-    웹 프레임워크와 무관하고, 나중에 server/common/ 으로 그대로 옮길 수 있다.
+    규칙과 쿼리는 server/common/device_auth.py 에 한 벌만 있다. hw 는 user_id
+    만 쓰므로 결과에서 꺼낸다.
     """
-    if not token or len(token) > 127:
-        return None
+    device = common_authenticate_device(db_pool, token)
+    return device["user_id"] if device else None
 
-    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    with db_pool.connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE devices
-                   SET last_seen_at = NOW()
-                 WHERE token_hash = %s
-                   AND user_id IS NOT NULL
-                RETURNING user_id
-                """,
-                (token_hash,),
-            )
-            row = cur.fetchone()
-    return row["user_id"] if row else None
 
 # ─── PostgreSQL Todo 헬퍼 ─────────────────────────────────────────────────────
 def postgres_get_schedule(user_id: UUID) -> str:

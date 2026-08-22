@@ -32,6 +32,9 @@ ssh "$HOST" "mkdir -p $STAGE"
 # 여기 추가하는 걸 잊으면 서버가 기동조차 못 했다.
 # --delete 는 쓰지 않는다 — 서버에만 있는 파일을 지우는 사고를 막는다.
 rsync -av --exclude='__pycache__' app/ "$HOST:$STAGE/app/"
+# common/ 은 hw·sw 가 함께 쓰는 모듈이라 앱 바깥(server/)에 있다.
+# 한쪽만 배포하면 다른 쪽이 옛 코드를 보게 되므로 양쪽 스크립트가 모두 옮긴다.
+rsync -av --exclude='__pycache__' ../common/ "$HOST:$STAGE/common/"
 rsync -av --exclude='__pycache__' tools/ "$HOST:$STAGE/tools/"
 rsync -av requirements.txt "$HOST:$STAGE/"
 
@@ -46,6 +49,7 @@ if [ -e "$BACKUP" ]; then
 else
     mkdir -p "$BACKUP"
     cp -a requirements.txt "$BACKUP"/
+    [ -e ../common ] && cp -a ../common "$BACKUP"/common || true
     # app/ 은 이번 배포에서 처음 생긴다(예전에는 파일이 평평하게 놓여 있었다).
     [ -e app ] && cp -a app "$BACKUP"/ || true
     for f in server.py voice_prompt.py audio_codec.py todo_matching.py todo_add.py; do
@@ -56,6 +60,8 @@ fi
 
 mkdir -p app tools
 rsync -a --exclude='__pycache__' "$STAGE/app/"   app/
+mkdir -p ../common
+rsync -a --exclude='__pycache__' "$STAGE/common/" ../common/
 rsync -a --exclude='__pycache__' "$STAGE/tools/" tools/
 chmod 750 tools/*
 install -m 640 "$STAGE/requirements.txt" requirements.txt
