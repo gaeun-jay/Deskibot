@@ -1,4 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 서버(api.deskibot.co.kr)와 통신하려면 필요하다.
+         Flutter 는 debug/profile 빌드에만 이 권한을 자동으로 넣어준다.
+         release 빌드는 여기 없으면 DNS 조회부터 실패한다
+         ("Failed host lookup ... errno = 7"). -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
     <application
         android:label="deskibot"
         android:name="${applicationName}"
