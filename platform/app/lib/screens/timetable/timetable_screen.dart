@@ -46,6 +46,7 @@ String _hourLabel(int h) {
 }
 
 String _fmtDuration(int totalMin) {
+  if (totalMin <= 0) return '-';
   if (totalMin < 60) return '$totalMin분';
   final h = totalMin ~/ 60;
   final m = totalMin % 60;
@@ -65,7 +66,16 @@ class _Segment {
       : isActive = true,
         session = s,
         startMin = s.startMinutes,
-        endMin = s.endMinutes;
+        // endMinutes < startMinutes → 자정 넘김(또는 end_time null→00:00)
+        // → 오늘 자정(24:00 = 1440분)으로 cap하여 양수 duration 보장
+        endMin = s.endMinutes >= s.startMinutes ? s.endMinutes : 24 * 60;
+
+  /// 세션 내부 일시정지 분리용: endMin을 activeEnd로 잘라서 표현
+  _Segment.activePart(FocusBlock s, int activeEnd)
+      : isActive = true,
+        session = s,
+        startMin = s.startMinutes,
+        endMin = activeEnd;
 
   _Segment.pause({required this.startMin, required this.endMin})
       : isActive = false,
@@ -86,6 +96,7 @@ class _SessionGroup {
       ..sort((a, b) => a.startMinutes.compareTo(b.startMinutes));
     final segs = <_Segment>[];
     for (int i = 0; i < sorted.length; i++) {
+      // 세션 간 갭 → 일시정지 세그먼트
       if (i > 0) {
         final prevEnd  = sorted[i - 1].endMinutes;
         final curStart = sorted[i].startMinutes;
@@ -93,7 +104,21 @@ class _SessionGroup {
           segs.add(_Segment.pause(startMin: prevEnd, endMin: curStart));
         }
       }
-      segs.add(_Segment.active(sorted[i]));
+
+      final fb = sorted[i];
+      final totalMin  = (fb.endMinutes - fb.startMinutes).clamp(0, 24 * 60);
+      final activeMin = fb.durationMin;
+
+      if (activeMin > 0 && activeMin < totalMin) {
+        // 세션 내부 일시정지 감지 (actual_duration < total_duration)
+        // 활성 구간: startMin ~ startMin+activeMin
+        // 일시정지:  startMin+activeMin ~ endMin
+        final activeEnd = fb.startMinutes + activeMin;
+        segs.add(_Segment.activePart(fb, activeEnd));
+        segs.add(_Segment.pause(startMin: activeEnd, endMin: fb.endMinutes));
+      } else {
+        segs.add(_Segment.active(fb));
+      }
     }
     segments = segs;
   }
@@ -328,7 +353,11 @@ class _TimetableScreenState extends State<TimetableScreen> {
   }
 
   List<_SessionGroup> _computeGroups(String type) {
-    final blocks = _focusBlocks.where((b) => b.sessionType == type).toList();
+    final blocks = _focusBlocks
+        .where((b) => b.sessionType == type)
+        // 실제 실행 시간(일시정지 제외)이 10분 미만인 세션은 시각화하지 않음
+        .where((b) => b.durationMin >= 10)
+        .toList();
     return _mergeSessions(blocks);
   }
 
@@ -589,7 +618,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
     final trackW = (totalW - timeW - gapW) / 2;
     final pomoX  = timeW;
     final stopX  = timeW + trackW + gapW;
-    final totalH = labelH + mapper.totalHeight + 8;
+    final totalH = labelH + mapper.totalHeight + _kRunMinH + 8;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.only(top: 4, bottom: 12),
@@ -684,6 +713,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
     Color textColor,
   ) {
     return Stack(
+      clipBehavior: Clip.none, // 자정 근처 블록이 잘리지 않도록
       children: [
         // 트랙 배경
         Container(
@@ -727,12 +757,12 @@ class _TimetableScreenState extends State<TimetableScreen> {
   }
 
   // ── 세션 블록 렌더링 ────────────────────────────────────────────────
-  // • 연속 활성 세그먼트(pause 없이 이어진) → 하나의 "런(run)" 블록
-  // • 일시정지 구간은 트랙 빈 공간으로 표현 (회색 오버레이 없음)
-  // • 최소 높이 클램프로 이전 블록을 침범할 경우, 다음 블록을 밀어 내려
-  //   최소 _kPauseGap px 간격을 유지 → 겹침 방지 + 일시정지 시각화
+  // • 그룹 전체(시작~끝)를 하나의 블록으로 렌더링
+  // • 활성 구간: solid accent 스트립
+  // • 일시정지 구간: 연한 accent 배경으로 자동 시각화 (빈 공간 없이)
+  // • 최소 높이 클램프 + 그룹 간 최소 간격 유지
   static const double _kRunMinH   = 24.0; // 블록 최소 높이 (px)
-  static const double _kPauseGap  =  5.0; // 런 사이 최소 간격 (px)
+  static const double _kPauseGap  =  5.0; // 블록 사이 최소 간격 (px)
 
   List<Widget> _buildBlocks(
     List<_SessionGroup> groups,
@@ -741,117 +771,139 @@ class _TimetableScreenState extends State<TimetableScreen> {
     Color textColor,
   ) {
     final ws = <Widget>[];
+    double prevBottom = double.negativeInfinity;
 
     for (final g in groups) {
       final isSel = _selectedGroupKey == g.key;
 
-      // ── 연속 활성 세그먼트를 "런"으로 묶기 ─────────────────────────
-      final runs = <(int, int)>[];  // (startMin, endMin)
-      int? runStart;
-      int? runEnd;
-      for (final seg in g.segments) {
-        if (seg.isActive) {
-          runStart ??= seg.startMin;
-          runEnd   = seg.endMin;
-        } else {
-          if (runStart != null) {
-            runs.add((runStart, runEnd!));
-            runStart = null;
-            runEnd   = null;
-          }
-        }
-      }
-      if (runStart != null) runs.add((runStart, runEnd!));
+      // ── 그룹 전체 위치 계산 ──────────────────────────────────────────
+      final naturalTop = mapper.minutesToY(g.startMinutes);
+      final naturalBot = mapper.minutesToY(g.endMinutes);
+      final bH = (naturalBot - naturalTop).clamp(_kRunMinH, double.infinity);
 
-      // ── 런마다 블록 렌더링 (위치 조정으로 겹침 방지) ───────────────
-      double prevBottom = double.negativeInfinity;
+      // 이전 블록과 겹치면 아래로 밀기
+      final bTop = (prevBottom.isFinite && prevBottom + _kPauseGap > naturalTop)
+          ? prevBottom + _kPauseGap
+          : naturalTop;
+      prevBottom = bTop + bH;
 
-      for (final (s, e) in runs) {
-        final naturalTop = mapper.minutesToY(s);
-        final naturalBot = mapper.minutesToY(e);
-        final bH = (naturalBot - naturalTop).clamp(_kRunMinH, double.infinity);
+      // ── 일시정지 유무에 따라 렌더링 방식 분기 ───────────────────────
+      // 일시정지 없음: 블록 전체를 solid accent로 채움
+      // 일시정지 있음: 세그먼트 위치를 bH에 비례 스케일 → 항상 블록을 꽉 채움
+      //   (짧은 세션이 _kRunMinH로 늘어나도 active/pause 비율을 유지)
+      final hasPause   = g.segments.any((s) => !s.isActive);
+      final naturalBH  = naturalBot - naturalTop; // 실제 픽셀 높이 (< _kRunMinH 가능)
+      // 스케일: bH / naturalBH. naturalBH=0 이면 스케일 불필요
+      final scale      = (hasPause && naturalBH > 0) ? bH / naturalBH : 1.0;
 
-        // 이전 블록 끝 + _kPauseGap 보다 위에 있으면 밀어 내림
-        final bTop = prevBottom.isNegative
-            ? naturalTop
-            : max(naturalTop, prevBottom + _kPauseGap);
-        prevBottom = bTop + bH;
+      // 활성 구간 스트립 (일시정지 있을 때만, 비례 스케일 적용)
+      final activeStrips = !hasPause ? <Widget>[] :
+          g.segments.where((s) => s.isActive).map((seg) {
+            final segNatTop = mapper.minutesToY(seg.startMin) - naturalTop;
+            final segNatH   = mapper.minutesToY(seg.endMin)
+                            - mapper.minutesToY(seg.startMin);
+            final segTop = (segNatTop * scale).clamp(0.0, bH);
+            final segH   = (segNatH  * scale).clamp(2.0, bH - segTop);
+            return Positioned(
+              top: segTop, left: 0, right: 0, height: segH,
+              child: ColoredBox(color: accent),
+            );
+          }).toList();
 
-        ws.add(Positioned(
-          top: bTop, left: 3, right: 3, height: bH,
-          child: GestureDetector(
-            onTap: () => _selectGroup(g),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  // ① accent 배경
-                  ColoredBox(color: accent),
-                  // ② 이름 레이블
+      ws.add(Positioned(
+        top: bTop, left: 3, right: 3, height: bH,
+        child: GestureDetector(
+          onTap: () => _selectGroup(g),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                // ① 배경: 일시정지 없으면 solid, 있으면 연한 accent(pause 영역)
+                ColoredBox(color: hasPause
+                    ? accent.withValues(alpha: 0.20)
+                    : accent),
+                // ② 활성 구간 스트립
+                ...activeStrips,
+                // ③ 이름 배지: HTML 목업의 .block-name-tag 방식
+                //    rgba(255,255,255,0.22) 반투명 흰 pill → active·pause 어떤 배경 위에도 가독성 확보
+                //    width=fit-content: 텍스트 너비만큼만 (Row+Flexible로 구현)
+                Positioned(
+                  top: 4, left: 5, right: 5,
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.22),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            g.displayLabel,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // ④ 시간 범위 (블록이 넉넉할 때)
+                if (bH >= 52)
                   Positioned(
-                    top: 4, left: 5, right: 5,
+                    bottom: 4, left: 5, right: 5,
                     child: Text(
-                      g.displayLabel,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
+                      '${_minToHM(g.startMinutes)}–${_minToHM(g.endMinutes)}',
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white.withValues(alpha: 0.85),
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  // ③ 시간 범위 (블록이 넉넉할 때)
-                  if (bH >= 52)
-                    Positioned(
-                      bottom: 4, left: 5, right: 5,
-                      child: Text(
-                        '${_minToHM(s)}–${_minToHM(e)}',
-                        style: TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.white.withValues(alpha: 0.85),
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  // ④ 선택 표시: 흰색 내부 테두리
-                  if (isSel)
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(5),
-                            border: Border.all(
-                              color: Colors.white.withValues(alpha: 0.9),
-                              width: 2.5,
-                            ),
+                // ⑤ 선택 표시: 흰색 내부 테두리
+                if (isSel)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(5),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.9),
+                            width: 2.5,
                           ),
                         ),
                       ),
                     ),
-                ],
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ));
+
+      // ⑥ 선택 시 외부 accent 테두리
+      if (isSel) {
+        ws.add(Positioned(
+          top: bTop - 2, left: 1, right: 1, height: bH + 4,
+          child: IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: accent, width: 2),
               ),
             ),
           ),
         ));
-
-        // ⑤ 선택 시 외부 accent 테두리
-        if (isSel) {
-          ws.add(Positioned(
-            top: bTop - 2, left: 1, right: 1, height: bH + 4,
-            child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: accent, width: 2),
-                ),
-              ),
-            ),
-          ));
-        }
       }
     }
     return ws;

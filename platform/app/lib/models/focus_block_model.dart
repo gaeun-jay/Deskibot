@@ -28,14 +28,33 @@ class FocusBlock {
   }
 
   factory FocusBlock.fromMap(String id, Map<String, dynamic> map) {
+    final startTime   = map['start_time'] as String? ?? '00:00';
+    final actualDur   = map['actual_duration'] as int? ?? 0;
+    final rawEndTime  = map['end_time'] as String?;
+
+    // end_time이 없으면 start_time + actual_duration으로 추정
+    final endTime = (rawEndTime != null && rawEndTime.isNotEmpty)
+        ? rawEndTime
+        : _addMinutes(startTime, actualDur);
+
     return FocusBlock(
       id: id,
       date: map['date'] as String? ?? '',
-      startTime: map['start_time'] as String? ?? '00:00',
-      endTime: map['end_time'] as String? ?? '00:00',
+      startTime: startTime,
+      endTime: endTime,
       sessionType: map['type'] as String? ?? 'pomodoro',
       label: map['title'] as String? ?? '집중 세션',
-      durationMin: map['actual_duration'] as int? ?? 0,
+      durationMin: actualDur,
     );
+  }
+
+  /// "HH:mm" 문자열에 minutes를 더한 결과를 "HH:mm"으로 반환 (자정 초과 시 wrap)
+  static String _addMinutes(String startTime, int minutes) {
+    final parts    = startTime.split(':');
+    final startMin = int.parse(parts[0]) * 60 + int.parse(parts[1]);
+    final endMin   = (startMin + minutes) % (24 * 60);
+    final hh       = (endMin ~/ 60).toString().padLeft(2, '0');
+    final mm       = (endMin % 60).toString().padLeft(2, '0');
+    return '$hh:$mm';
   }
 }
