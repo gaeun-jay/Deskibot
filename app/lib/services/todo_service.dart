@@ -1,7 +1,10 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import 'package:deskibot/models/todo_model.dart';
 import 'package:deskibot/services/api_client.dart';
+import 'package:deskibot/services/notification_service.dart';
 
 /// 할 일 서비스. Firestore 대신 FastAPI 서버를 쓴다.
 ///
@@ -117,6 +120,20 @@ class TodoService {
       _loadedDate = target;
       _followToday = target == _todayStr();
       if (!_controller.isClosed) _controller.add(list);
+
+      // 마감 알림을 방금 받은 목록에 맞춘다.
+      //
+      // 추가·수정·삭제·완료 토글이 모두 refresh() 로 끝나므로 여기 한 곳만
+      // 두면 빠뜨릴 일이 없다. NotificationService.sync 는 기존 예약을 지우고
+      // 조건이 맞을 때만 다시 걸기 때문에, 어떤 변경이든 결과가 같아진다.
+      //
+      // 알림 실패로 할 일 저장까지 실패하면 안 되므로 예외는 삼킨다.
+      unawaited(
+        NotificationService.instance.syncAll(list).catchError((e) {
+          debugPrint('[알림] 동기화 실패: $e');
+        }),
+      );
+
       return list;
     } on ApiException catch (e) {
       // 로그인 전이면 빈 목록으로 둔다. 화면이 깨지지 않게.

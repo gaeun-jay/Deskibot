@@ -5,6 +5,18 @@
          ("Failed host lookup ... errno = 7"). -->
     <uses-permission android:name="android.permission.INTERNET"/>
 
+    <!-- 할 일 마감 알림 -->
+    <!-- Android 13(API 33)+ 는 알림 표시에 사용자 동의가 필요하다.
+         권한을 안 받으면 예약은 성공한 것처럼 보이는데 아무것도 뜨지 않는다. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- "마감 30분 전"처럼 정확한 시각에 띄우려면 별도 권한이 필요하다.
+         없으면 안드로이드가 배터리 절약을 위해 수 분~수십 분 늦춘다. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
+    <!-- 재부팅 후에도 예약이 살아있게 한다. 없으면 폰을 껐다 켜는 순간
+         예약해둔 알림이 전부 사라진다. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+
     <application
         android:label="deskibot"
         android:name="${applicationName}"
@@ -37,6 +49,22 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- 예약된 알림을 실제로 띄우는 수신기.
+             재부팅 시 예약을 복원하는 수신기도 함께 등록한다 — 없으면
+             폰을 껐다 켜는 순간 예약해둔 마감 알림이 전부 사라진다. -->
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
+            android:exported="false" />
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
