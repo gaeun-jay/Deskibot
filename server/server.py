@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
 Deskibot Voice Pipeline
-ESP32 → STT (Google) → Claude (Tool Use) → TTS (Google) → ESP32
+ESP32(µ-law) → STT (CLOVA) → Claude (Tool Use) → TTS (Google) → ESP32
+
+STT는 2026-08-19 실측으로 CLOVA를 채택했다(근거는 STT_ENGINE 선언부 주석).
+CLOVA 호출이 실패하면 Google로 자동 대체하므로 두 자격증명이 모두 필요하다.
+TTS는 Google 그대로다.
 
 응답 바이너리 포맷:
   [4B] STT 텍스트 길이 (little-endian uint32)
@@ -106,7 +110,19 @@ except ValueError as exc:
     raise RuntimeError("DB_PORT must be an integer") from exc
 _db_env["row_factory"] = dict_row
 
-db_pool = ConnectionPool(conninfo="", kwargs=_db_env, min_size=1, max_size=5, open=True)
+# check: 빌려주기 전에 커넥션이 살아있는지 확인한다. 로봇이 몇 시간 조용하면
+# 놀던 커넥션이 죽는데, 이게 없으면 침묵 뒤 첫 요청만 503으로 실패하고
+# 그 다음부터 정상이 된다. 시연에서 첫 호출이 튕기는 형태로 나타난다.
+# max_idle: 애초에 죽을 때까지 방치하지 않도록 5분마다 재활용한다.
+db_pool = ConnectionPool(
+    conninfo="",
+    kwargs=_db_env,
+    min_size=1,
+    max_size=5,
+    open=True,
+    check=ConnectionPool.check_connection,
+    max_idle=300,
+)
 print("[PostgreSQL] ✅ device 인증 풀 연결 완료", flush=True)
 
 # ─── HW device 인증 ───────────────────────────────────────────────────────────
