@@ -41,6 +41,11 @@ dependencies:
   provider: ^6.1.5
   wakelock_plus: ^1.3.4
   flutter_ringtone_player: ^4.0.0
+  # 할 일 마감 알림. 서버가 아니라 폰이 직접 띄운다 — 알릴 시각이 저장 시점에
+  # 이미 정해져 있어 푸시(FCM)가 필요 없고, 인터넷이 끊겨도 뜬다.
+  flutter_local_notifications: ^19.4.2
+  # 예약 시각을 KST 로 계산한다. 없으면 UTC 로 잡혀 9시간 어긋난다.
+  timezone: ^0.10.1
 
 dev_dependencies:
   flutter_test:

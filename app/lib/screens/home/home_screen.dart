@@ -200,10 +200,10 @@ class _HomeScreenState extends State<HomeScreen> {
       _selectedDeadlineTime = _parseTime(todo.deadlineTime);
       if (!todo.notify) {
         _notifyOption = '없음';
-      } else if (todo.notifyBefore == 30) {
-        _notifyOption = '마감 30분 전';
+      } else if (todo.notifyBefore == 60) {
+        _notifyOption = '마감 1시간 전';
       } else {
-        _notifyOption = '마감 당일 아침 9시';
+        _notifyOption = '마감 30분 전';
       }
     });
   }
@@ -258,8 +258,9 @@ class _HomeScreenState extends State<HomeScreen> {
     bool notify = false;
     int? notifyBefore;
 
-    if (_notifyOption == '마감 당일 아침 9시') {
+    if (_notifyOption == '마감 1시간 전') {
       notify = true;
+      notifyBefore = 60;
     } else if (_notifyOption == '마감 30분 전') {
       notify = true;
       notifyBefore = 30;
@@ -661,7 +662,7 @@ class _HomeScreenState extends State<HomeScreen> {
           style: const TextStyle(fontSize: 13, color: Colors.black87),
           items: const [
             DropdownMenuItem(value: '없음', child: Text('없음')),
-            DropdownMenuItem(value: '마감 당일 아침 9시', child: Text('마감 당일 아침 9시')),
+            DropdownMenuItem(value: '마감 1시간 전', child: Text('마감 1시간 전')),
             DropdownMenuItem(value: '마감 30분 전', child: Text('마감 30분 전')),
           ],
           onChanged: (v) {
