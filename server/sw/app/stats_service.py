@@ -91,6 +91,7 @@ def _compute(conn, user_id: UUID, on_date: date_type):
     totals["stopwatch_duration_sec"] = int(row["s_dur"])
 
     # 감지 이벤트 — 아직 안 끝난 이벤트는 duration_sec 가 NULL 이므로 0으로 본다.
+    # 세션이 아직 진행 중이면 그 세션의 감지 이벤트도 같이 제외한다
     row = conn.execute(
         """
         SELECT
@@ -102,7 +103,7 @@ def _compute(conn, user_id: UUID, on_date: date_type):
                      FILTER (WHERE e.kind = 'phone'), 0)  AS ph_dur
         FROM focus_session_events e
         JOIN focus_sessions s ON s.id = e.session_id
-        WHERE s.user_id = %s AND s.session_date = %s
+        WHERE s.user_id = %s AND s.session_date = %s AND s.status <> 'in_progress'
         """,
         (user_id, on_date),
     ).fetchone()
@@ -153,7 +154,7 @@ def _compute(conn, user_id: UUID, on_date: date_type):
                count(*) FILTER (WHERE e.kind = 'phone')  AS ph_cnt
         FROM focus_session_events e
         JOIN focus_sessions s ON s.id = e.session_id
-        WHERE s.user_id = %s AND s.session_date = %s
+        WHERE s.user_id = %s AND s.session_date = %s AND s.status <> 'in_progress'
         GROUP BY 1
         """,
         (user_id, on_date),

@@ -16,18 +16,27 @@ class DailyService {
         '-${now.day.toString().padLeft(2, '0')}';
   }
 
+  /// 공부일지는 "전날 하루치"를 다루므로, date 를 안 넘기면 어제 날짜를 쓴다.
+  /// 서버 스케줄러가 매일 00:05 KST 에 전날 몫을 미리 만들어두는 것과
+  /// 같은 기준이다 (scheduler.py 참고).
+  static String _yesterdayStr() {
+    final now = DateTime.now().subtract(const Duration(days: 1));
+    return '${now.year}-${now.month.toString().padLeft(2, '0')}'
+        '-${now.day.toString().padLeft(2, '0')}';
+  }
+
   static int _toMinutes(dynamic seconds) =>
       ((seconds as int? ?? 0) / 60).round();
 
-  /// 오늘의 공부일지.
+  /// 공부일지(전날 하루 요약). date 를 안 넘기면 어제 날짜를 조회한다.
   ///
-  /// title / subtitle 은 analysis_daily 에 저장할 컬럼이 없어 항상 빈 값이다.
-  /// 화면에는 title 이 없을 때의 대체 분기가 이미 있다.
+  /// title / subtitle 은 마이그레이션 이전에 생성된 기존 행에서는 비어있을
+  /// 수 있다. 화면에는 title 이 없을 때의 대체 분기가 이미 있다.
   Future<Map<String, String>?> getTodayAnalysis({String? date}) async {
     try {
       final res = await _api.get(
         '/api/analysis/daily',
-        query: {'date': date ?? _todayStr()},
+        query: {'date': date ?? _yesterdayStr()},
       );
       final map = Map<String, dynamic>.from(res as Map);
 
@@ -43,12 +52,12 @@ class DailyService {
     }
   }
 
-  /// 오늘의 공부일지를 새로 생성한다 (Claude 호출).
+  /// 공부일지를 새로 생성한다 (Claude 호출). date 를 안 넘기면 어제 날짜로 생성한다.
   Future<Map<String, String>?> generateTodayAnalysis({String? date}) async {
     try {
       final res = await _api.post(
         '/api/analysis/daily/generate',
-        body: null,
+        query: {'date': date ?? _yesterdayStr()},
       );
       final map = Map<String, dynamic>.from(res as Map);
 

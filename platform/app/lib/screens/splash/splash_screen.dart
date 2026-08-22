@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:deskibot/services/auth_service.dart';
 import 'package:deskibot/screens/auth/login_screen.dart';
@@ -35,23 +34,6 @@ class _SplashScreenState extends State<SplashScreen> {
       debugPrint('$key = ${prefs.get(key)}');
     }
     debugPrint('-------------------------');
-
-    if (isLoggedIn) {
-      final uid = prefs.getString('uid');
-      if (uid != null) {
-        await FirebaseDatabase.instance.ref('users/$uid/status/current_state').set({
-          'session_id': '',
-          'type': '',
-          'state': '',
-          'duration': 0,
-          'started_at': '',
-          'paused_at': '',
-          'total_pause_sec': 0,
-          'is_detecting_drowsy': false,
-          'is_detecting_phone': false,
-        });
-      }
-    }
 
     if (!mounted) return;
 

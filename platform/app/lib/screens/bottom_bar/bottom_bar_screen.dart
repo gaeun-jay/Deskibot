@@ -5,6 +5,7 @@ import 'package:deskibot/screens/timetable/timetable_screen.dart';
 import 'package:deskibot/screens/daily_analysis/daily_analysis_screen.dart';
 import 'package:deskibot/screens/cumulative_analysis/cumulative_analysis_screen.dart';
 import 'package:deskibot/screens/settings/settings_screen.dart';
+import 'package:deskibot/widgets/app_bottom_nav.dart';
 
 class BottomBarScreen extends StatefulWidget {
   const BottomBarScreen({super.key});
@@ -14,8 +15,6 @@ class BottomBarScreen extends StatefulWidget {
 }
 
 class _BottomBarScreenState extends State<BottomBarScreen> {
-  int _currentIndex = 0;
-
   final List<Widget> _screens = const [
     HomeScreen(),
     FocusScreen(),
@@ -26,126 +25,37 @@ class _BottomBarScreenState extends State<BottomBarScreen> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    // BottomNavState 가 유일한 소스다 — 다른 화면(카테고리 추가/수정 등)에서
+    // 탭을 바꾸면 여기도 바로 다시 그려지게 구독한다.
+    BottomNavState.index.addListener(_rebuild);
+  }
+
+  @override
+  void dispose() {
+    BottomNavState.index.removeListener(_rebuild);
+    super.dispose();
+  }
+
+  void _rebuild() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final currentIndex = BottomNavState.index.value;
     return Scaffold(
       body: IndexedStack(
-        index: _currentIndex,
+        index: currentIndex,
         children: List.generate(
           _screens.length,
-          (i) => TickerMode(enabled: i == _currentIndex, child: _screens[i]),
+          (i) => TickerMode(enabled: i == currentIndex, child: _screens[i]),
         ),
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        onTap: (index) => setState(() => _currentIndex = index),
-        type: BottomNavigationBarType.fixed,
-        selectedItemColor: const Color(0xFF4A90D9),
-        unselectedItemColor: Colors.grey,
-        items: [
-          BottomNavigationBarItem(
-            icon: Image.asset(
-              'assets/images/homebtn_none.png',
-              width: 28,
-              height: 28,
-              color: Colors.grey,
-              colorBlendMode: BlendMode.srcIn,
-            ),
-            activeIcon: Image.asset(
-              'assets/images/homebtn_none.png',
-              width: 28,
-              height: 28,
-              color: const Color(0xFF4A90D9),
-              colorBlendMode: BlendMode.srcIn,
-            ),
-            label: '홈',
-          ),
-          BottomNavigationBarItem(
-            icon: Image.asset(
-              'assets/images/focusbtn_none.png',
-              width: 28,
-              height: 28,
-              color: Colors.grey,
-              colorBlendMode: BlendMode.srcIn,
-            ),
-            activeIcon: Image.asset(
-              'assets/images/focusbtn_none.png',
-              width: 28,
-              height: 28,
-              color: const Color(0xFF4A90D9),
-              colorBlendMode: BlendMode.srcIn,
-            ),
-            label: '집중',
-          ),
-          BottomNavigationBarItem(
-            icon: Image.asset(
-              'assets/images/ttbtn_none.png',
-              width: 28,
-              height: 28,
-              color: Colors.grey,
-              colorBlendMode: BlendMode.srcIn,
-            ),
-            activeIcon: Image.asset(
-              'assets/images/ttbtn_none.png',
-              width: 28,
-              height: 28,
-              color: const Color(0xFF4A90D9),
-              colorBlendMode: BlendMode.srcIn,
-            ),
-            label: '데일리로그',
-
-          ),
-          BottomNavigationBarItem(
-            icon: Image.asset(
-              'assets/images/dailybtn_none.png',
-              width: 28,
-              height: 28,
-              color: Colors.grey,
-              colorBlendMode: BlendMode.srcIn,
-            ),
-            activeIcon: Image.asset(
-              'assets/images/dailybtn_none.png',
-              width: 28,
-              height: 28,
-              color: const Color(0xFF4A90D9),
-              colorBlendMode: BlendMode.srcIn,
-            ),
-            label: '일간',
-          ),
-          BottomNavigationBarItem(
-            icon: Image.asset(
-              'assets/images/cumbtn_none.png',
-              width: 28,
-              height: 28,
-              color: Colors.grey,
-              colorBlendMode: BlendMode.srcIn,
-            ),
-            activeIcon: Image.asset(
-              'assets/images/cumbtn_none.png',
-              width: 28,
-              height: 28,
-              color: const Color(0xFF4A90D9),
-              colorBlendMode: BlendMode.srcIn,
-            ),
-            label: '누적',
-          ),
-          BottomNavigationBarItem(
-            icon: Image.asset(
-              'assets/images/setbtn_none.png',
-              width: 28,
-              height: 28,
-              color: Colors.grey,
-              colorBlendMode: BlendMode.srcIn,
-            ),
-            activeIcon: Image.asset(
-              'assets/images/setbtn_none.png',
-              width: 28,
-              height: 28,
-              color: const Color(0xFF4A90D9),
-              colorBlendMode: BlendMode.srcIn,
-            ),
-            label: '설정',
-          ),
-        ],
+      bottomNavigationBar: AppBottomNavBar(
+        currentIndex: currentIndex,
+        onTap: (index) => BottomNavState.index.value = index,
       ),
     );
   }

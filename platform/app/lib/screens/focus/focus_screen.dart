@@ -28,6 +28,13 @@ class _FocusScreenState extends State<FocusScreen>
   String? _uid;
   int _selectedDuration = 25;
   List<Map<String, dynamic>> _todaySessions = [];
+  String? _loadedDate;
+  Timer? _dateCheckTimer;
+
+  String _todayStr() {
+    final now = DateTime.now();
+    return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+  }
 
   @override
   void initState() {
@@ -40,6 +47,15 @@ class _FocusScreenState extends State<FocusScreen>
       ),
     );
     _init();
+
+    // 이 화면도 IndexedStack 으로 계속 떠 있을 수 있어서, 아무 조작 없이
+    // 자정을 넘기면 "오늘 세션" 목록이 어제 걸로 멈춰있을 수 있다.
+    // 1분마다 스스로 날짜가 바뀌었는지 확인한다.
+    _dateCheckTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (_uid != null && _loadedDate != null && _loadedDate != _todayStr()) {
+        _loadTodaySessions(_uid!);
+      }
+    });
   }
 
   Future<void> _init() async {
@@ -53,9 +69,7 @@ class _FocusScreenState extends State<FocusScreen>
   }
 
   Future<void> _loadTodaySessions(String uid) async {
-    final now = DateTime.now();
-    final dateStr =
-        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final dateStr = _todayStr();
     // 카드가 개수만 쓰므로 서버 응답 맵을 그대로 담는다.
     final res = await ApiClient()
         .get('/api/focus-sessions', query: {'date': dateStr});
@@ -66,11 +80,13 @@ class _FocusScreenState extends State<FocusScreen>
     if (!mounted) return;
     setState(() {
       _todaySessions = completed;
+      _loadedDate = dateStr;
     });
   }
 
   @override
   void dispose() {
+    _dateCheckTimer?.cancel();
     _tabController.dispose();
     _timerProvider?.dispose();
     SystemChrome.setSystemUIOverlayStyle(

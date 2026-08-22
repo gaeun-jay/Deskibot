@@ -261,10 +261,14 @@ CREATE TABLE stats_daily_timeslot (
 CREATE TABLE analysis_daily (
   user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   date          DATE NOT NULL,
+  title         TEXT NOT NULL,
+  subtitle      TEXT NOT NULL,
   advice        TEXT NOT NULL,
   generated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 
   PRIMARY KEY (user_id, date),
+  CHECK (btrim(title) <> ''),
+  CHECK (btrim(subtitle) <> ''),
   CHECK (btrim(advice) <> '')
 );
 
