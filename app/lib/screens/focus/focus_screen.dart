@@ -75,7 +75,8 @@ class _FocusScreenState extends State<FocusScreen>
         .get('/api/focus-sessions', query: {'date': dateStr});
     final completed = (res['sessions'] as List)
         .map((e) => Map<String, dynamic>.from(e as Map))
-        .where((s) => s['status'] == 'completed')
+        .where((s) =>
+            s['status'] == 'completed' || s['status'] == 'incomplete')
         .toList();
     if (!mounted) return;
     setState(() {
@@ -613,16 +614,32 @@ class _SessionItem extends StatelessWidget {
   final bool showDivider;
   const _SessionItem({required this.session, required this.showDivider});
 
+  /// 초를 "n분 m초" 또는 "n초" 형식으로 변환
+  String _fmtDuration(int sec) {
+    if (sec <= 0) return '';
+    final m = sec ~/ 60;
+    final s = sec % 60;
+    if (m == 0) return '$s초';
+    if (s == 0) return '$m분';
+    return '$m분 $s초';
+  }
+
   @override
   Widget build(BuildContext context) {
     final type = session['type'] as String? ?? '';
-    final duration =
-        (session['planned_duration'] as num?)?.toInt() ??
-        (session['actual_duration'] as num?)?.toInt() ??
-        0;
+    final plannedMin =
+        ((session['planned_duration_sec'] as num?)?.toInt() ?? 0) ~/ 60;
+    final actualSec =
+        (session['actual_duration_sec'] as num?)?.toInt() ?? 0;
     final startTime = session['start_time'] as String? ?? '';
     final endTime = session['end_time'] as String? ?? '';
-    final label = type == 'pomodoro' ? '$duration분 완료' : '스톱워치 완료';
+
+    final String label;
+    if (type == 'pomodoro') {
+      label = plannedMin > 0 ? '$plannedMin분 완료' : '뽀모도로 완료';
+    } else {
+      label = actualSec > 0 ? '스톱워치 ${_fmtDuration(actualSec)}' : '스톱워치 완료';
+    }
 
     return Container(
       height: 61,

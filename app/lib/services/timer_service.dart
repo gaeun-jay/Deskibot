@@ -224,6 +224,7 @@ class TimerService {
       _revision = (session['revision'] as num?)?.toInt() ?? _revision;
 
       // status → RTDB state 변환
+      final action = msg['action'] as String?;
       final status = session['status'] as String?;
       final runtimeState = session['runtime_state'] as String?;
 
@@ -234,6 +235,10 @@ class TimerService {
         rtdbState = 'end';
       } else if (runtimeState == 'paused') {
         rtdbState = 'pause';
+      } else if (action == 'focus_resume') {
+        // 로봇이 재개한 경우 — runtimeState 는 'running' 이라 'start' 로
+        // 잘못 분류되므로 action 으로 명시적으로 구분한다.
+        rtdbState = 'resume';
       } else {
         rtdbState = 'start';
       }
