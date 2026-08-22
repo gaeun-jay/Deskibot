@@ -1,16 +1,6 @@
 import 'package:deskibot/models/cumulative_stats_model.dart';
 import 'package:deskibot/services/api_client.dart';
 
-// ISO 주차 ID: "YYYY-Www" (서버와 동일 로직)
-String currentIsoWeekId() => _isoWeekId(DateTime.now());
-
-String _isoWeekId(DateTime date) {
-  final thursday = date.add(Duration(days: 4 - (date.weekday == 7 ? 0 : date.weekday)));
-  final yearStart = DateTime(thursday.year, 1, 1);
-  final week = ((thursday.difference(yearStart).inDays + 1) / 7).ceil();
-  return '${thursday.year}-W${week.toString().padLeft(2, '0')}';
-}
-
 class CumulativeStatsService {
 
   /// periodIndex: 0=1주(7일/7버킷), 1=1달(30일/4버킷), 2=3달(90일/3버킷),
@@ -130,7 +120,6 @@ class CumulativeStatsService {
   Future<CumulativeAnalysisModel?> fetchAnalysis(int periodIndex) async {
     if (periodIndex < 0 || periodIndex >= _periodTypes.length) return null;
 
-    final label = _analysisPeriod(periodIndex, DateTime.now())?.label ?? '';
     final periodType = _periodTypes[periodIndex];
 
     try {
@@ -143,7 +132,7 @@ class CumulativeStatsService {
       return CumulativeAnalysisModel.fromMap(
         '${map['period_start']}~${map['period_end']}',
         map,
-        periodLabel: label,
+        periodLabel: _periodLabel(periodIndex, map['period_start'] as String?),
       );
     } on ApiException catch (e) {
       // 아직 생성된 분석이 없거나 로그인 전.
@@ -152,24 +141,27 @@ class CumulativeStatsService {
     }
   }
 
-  /// periodIndex + 기준 날짜 → (문서 id, 화면 표시용 라벨)
-  ({String id, String label})? _analysisPeriod(int periodIndex, DateTime date) {
-    final mm = date.month.toString().padLeft(2, '0');
+  /// 리포트 배지에 쓰는 기간 라벨.
+  ///
+  /// 반드시 **서버가 준 period_start** 로 만든다. 예전에는 DateTime.now() 로
+  /// 계산했는데, 서버가 리포트 기간을 "직전 달력 기간"(지난주 · 지난달 …)으로
+  /// 바꾸면서 라벨만 한 주/한 달 앞서게 됐다. 8/10~8/16 리포트에 "8/17 주 기준"
+  /// 이라고 붙는 식이다.
+  String _periodLabel(int periodIndex, String? periodStart) {
+    final start = periodStart == null ? null : DateTime.tryParse(periodStart);
+    if (start == null) return '';
+
     switch (periodIndex) {
       case 0:
-        final monday = date.subtract(Duration(days: date.weekday - 1));
-        return (id: _isoWeekId(date), label: '${monday.month}/${monday.day} 주');
+        return '${start.month}/${start.day} 주';
       case 1:
-        return (id: '${date.year}-$mm', label: '${date.month}월');
+        return '${start.month}월';
       case 2:
-        return (id: '${date.year}-${mm}_3m', label: '${date.month}월');
+        return '${((start.month - 1) ~/ 3) + 1}분기';
       case 3:
-        return (id: '${date.year}-${mm}_6m', label: '${date.month}월');
-      case 4:
-        final q = ((date.month - 1) ~/ 3) + 1;
-        return (id: '${date.year}-Q${q}_1y', label: '$q분기');
+        return start.month <= 6 ? '상반기' : '하반기';
       default:
-        return null;
+        return '${start.year}년';
     }
   }
 

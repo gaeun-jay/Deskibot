@@ -43,6 +43,8 @@ STATUS_BY_CODE = {
     "user_not_found": 404,
     "analysis_not_found": 404,
     "no_data": 409,
+    # 그 기간을 통째로 겪지 않은 유저 (첫 일간 분석이 기간 시작보다 늦다)
+    "period_not_covered": 409,
     "missing_api_key": 500,
     # 모델 쪽 문제는 502 로 (클라이언트가 고칠 수 있는 게 아니다)
     "model_request_invalid": 502,

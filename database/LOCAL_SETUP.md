@@ -10,7 +10,37 @@ EC2(`api.deskibot.co.kr`)의 `deskibot` DB를 로컬 개발용으로 그대로 �
 | `deskibot_schema_v1.sql` | 최초 스키마 (테이블 11개, 트리거, 인덱스) | 커밋 대상 |
 | `002_focus_realtime.sql` | focus_sessions에 실시간 동기화 컬럼 추가 | 커밋 대상 |
 | `003_focus_events_realtime.sql` | focus_session_events 열린 감지 허용 | 커밋 대상 |
+| `004_focus_outcome_view.sql` | focus_session_outcomes 뷰 (status → end_reason). HW팀 작성 | 커밋 대상 |
+| `005_analysis_daily_title.sql` | analysis_daily에 title/subtitle 추가 + 기존 행 백필 | 커밋 대상 |
+| `006_backfill_analysis_started_date.sql` | users.analysis_started_date 채우기 | 커밋 대상 |
 | `deskibot_full_20260813.sql` | **스키마 + 데이터 전체 덤프** | `.gitignore` 처리됨 |
+
+## ⚠️ 코드를 받았으면 이걸 먼저 실행한다
+
+`git pull` 로 서버 코드를 받았다면 **DB 마이그레이션을 먼저 돌려야 한다.**
+안 돌리면 `GET /api/analysis/daily` 부터 500 이 난다 (없는 컬럼을 SELECT 한다).
+
+```bash
+cd database
+psql -U deskibot_app -d deskibot -v ON_ERROR_STOP=1 -f 004_focus_outcome_view.sql
+psql -U deskibot_app -d deskibot -v ON_ERROR_STOP=1 -f 005_analysis_daily_title.sql
+psql -U deskibot_app -d deskibot -v ON_ERROR_STOP=1 -f 006_backfill_analysis_started_date.sql
+```
+
+셋 다 **재실행해도 안전하다.** 이미 적용됐으면 아무 일도 일어나지 않으니, 내 DB에
+뭐가 적용됐는지 모르겠으면 그냥 세 개 다 돌리면 된다.
+
+적용됐는지 확인:
+
+```bash
+psql -U deskibot_app -d deskibot -c "\d analysis_daily"   # title, subtitle 있어야 함
+psql -U deskibot_app -d deskibot -c "\dv"                 # focus_session_outcomes 있어야 함
+```
+
+> `peer authentication failed` 가 나면 `-h 127.0.0.1` 을 붙인다. 소켓 접속은 리눅스
+> 계정명과 DB 계정명이 같아야 통과하는 `peer` 인증을 쓰기 때문이다.
+
+**EC2 적용 현황 (2026-08-22 기준)** — `004`는 적용됨, `005`·`006`은 **미적용**.
 
 덤프는 2026-08-13 06:5x UTC 시점 스냅샷이다. HW팀이 계속 쓰므로 시간이 지나면
 실서버와 벌어진다. 필요하면 아래 명령으로 다시 받는다.
@@ -68,7 +98,11 @@ focus_session_events   38     todos                  18
 psql -U postgres -d deskibot_clean -f deskibot_schema_v1.sql
 psql -U postgres -d deskibot_clean -f 002_focus_realtime.sql
 psql -U postgres -d deskibot_clean -f 003_focus_events_realtime.sql
+psql -U postgres -d deskibot_clean -f 004_focus_outcome_view.sql
 ```
+
+> `005`는 `deskibot_schema_v1.sql` 에 이미 title/subtitle 이 들어 있어서
+> 빈 DB에는 실행할 필요가 없다. 실행해도 아무 일도 일어나지 않는다.
 
 > `002`는 `focus_sessions`에 `NOT NULL` 컬럼(`initiated_by`, `last_changed_by`)을
 > 기본값 없이 추가하므로, 기존 행이 있는 DB에는 그대로 적용되지 않는다.

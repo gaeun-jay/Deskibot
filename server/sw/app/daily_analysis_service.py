@@ -233,6 +233,24 @@ def generate_daily_analysis(user_id: str, on_date: date_type | None = None):
             (parsed, on_date, title, subtitle, advice),
         ).fetchone()
 
+        # 누적 분석은 "그 기간을 통째로 겪은 유저"에게만 만든다. 그 기준이
+        # users.analysis_started_date 인데, 스키마에만 있고 여태 아무도 쓰지
+        # 않아 전부 NULL 이었다. 일간 분석이 생길 때마다 가장 이른 날짜로
+        # 맞춰준다 (지난 날짜를 나중에 생성해도 앞으로 당겨진다).
+        conn.execute(
+            """
+            UPDATE users
+               SET analysis_started_date = LEAST(
+                       COALESCE(analysis_started_date, %(on_date)s),
+                       %(on_date)s
+                   )
+             WHERE id = %(user_id)s
+               AND (analysis_started_date IS NULL
+                    OR analysis_started_date > %(on_date)s)
+            """,
+            {"on_date": on_date, "user_id": parsed},
+        )
+
     return serialize_daily(row)
 
 

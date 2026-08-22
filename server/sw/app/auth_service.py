@@ -29,10 +29,16 @@ MIN_PASSWORD_LENGTH = 8
 
 # 앱 auth_service.dart 가 가입 시 만들던 기본 카테고리와 동일하게 맞춘다.
 # todos.category_id 가 NOT NULL 이라 가입 직후 최소 하나는 있어야 한다.
+# "기타"는 분류가 애매한 할 일을 받는 자리라 앱 설정 화면에서 수정·삭제를 막는다
+# (settings_screen.dart 의 Category.isLocked). 이름을 바꾸면 그 잠금이 풀리므로
+# 양쪽을 같이 고쳐야 한다.
+#
+# 카테고리는 trg_category_limit 트리거로 유저당 5개까지다. 기본이 3개면 사용자가
+# 직접 만들 수 있는 자리가 2개 남는다.
 DEFAULT_CATEGORIES = [
     ("공부", "#4472C4"),
     ("업무", "#ED7D31"),
-    ("운동", "#70AD47"),
+    ("기타", "#858585"),
 ]
 
 _hasher = PasswordHasher()

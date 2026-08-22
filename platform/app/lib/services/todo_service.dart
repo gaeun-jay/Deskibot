@@ -17,10 +17,14 @@ class TodoService {
 
   factory TodoService() => _instance;
 
-  TodoService._internal() { 
+  TodoService._internal() {
     // 자정이 지나도 refresh()를 안 부르면 날짜가 어제에 멈춰있음 따라서 1분마다 날짜가 바뀌었는지 확인하여 새로 불러옴
+    //
+    // 단, 홈에서 화살표로 다른 날짜를 보고 있는 중이면(_followToday == false)
+    // 손대지 않는다. 안 그러면 내일 할 일을 보던 사용자가 1분 뒤에 오늘로
+    // 튕겨나간다.
     Timer.periodic(const Duration(minutes: 1), (_) {
-      if (_loadedDate != null && _loadedDate != _todayStr()) {
+      if (_followToday && _loadedDate != null && _loadedDate != _todayStr()) {
         refresh();
       }
     });
@@ -33,6 +37,17 @@ class TodoService {
 
   List<TodoModel> _cache = const [];
   String? _loadedDate;
+
+  /// 지금 스트림에 흐르는 목록이 "오늘" 것인지. 홈에서 다른 날짜로 옮기면
+  /// false 가 되고, 그동안은 자정 폴링이 목록을 건드리지 않는다.
+  bool _followToday = true;
+
+  /// 스트림에 마지막으로 흘려보낸 목록의 날짜(YYYY-MM-DD).
+  ///
+  /// 스트림이 싱글톤 하나뿐이라 홈이 다른 날짜로 옮기면 구독자 전부가 그
+  /// 날짜의 목록을 받는다. "오늘"만 세야 하는 구독자(일간 분석 화면)는 이
+  /// 값을 보고 자기가 필요한 날짜인지 판단한다.
+  String get loadedDate => _loadedDate ?? _todayStr();
 
   static String _todayStr() {
     final now = DateTime.now();
@@ -100,6 +115,7 @@ class TodoService {
 
       _cache = list;
       _loadedDate = target;
+      _followToday = target == _todayStr();
       if (!_controller.isClosed) _controller.add(list);
       return list;
     } on ApiException catch (e) {

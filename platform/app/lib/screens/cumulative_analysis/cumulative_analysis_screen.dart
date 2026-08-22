@@ -283,6 +283,26 @@ class _CumulativeAnalysisScreenState extends State<CumulativeAnalysisScreen> {
     );
   }
 
+  /// 아직 리포트가 없을 때 보여줄 안내.
+  ///
+  /// 누적 리포트는 서버 스케줄러가 직전 달력 기간이 끝난 뒤에 만든다
+  /// (server/sw/app/scheduler.py 의 CUMULATIVE_SCHEDULE). 앱에서 생성을
+  /// 요청하지 않으므로, 대신 언제 생기는지를 알려준다.
+  String _pendingAnalysisMessage() {
+    switch (_selectedPeriod) {
+      case 0:
+        return '지난주 리포트는 매주 월요일 아침에 만들어져요.';
+      case 1:
+        return '지난달 리포트는 매월 1일 아침에 만들어져요.';
+      case 2:
+        return '분기 리포트는 1·4·7·10월 1일 아침에 만들어져요.';
+      case 3:
+        return '반기 리포트는 1월과 7월 1일 아침에 만들어져요.';
+      default:
+        return '연간 리포트는 매년 1월 1일 아침에 만들어져요.';
+    }
+  }
+
   Widget _buildAISummary() {
     final summary = _analysis?.summary;
     final hasData = summary != null && summary.isNotEmpty;
@@ -309,9 +329,7 @@ class _CumulativeAnalysisScreenState extends State<CumulativeAnalysisScreen> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              hasData
-                  ? summary
-                  : '데이터가 쌓이면 AI가 나의 취약점을 한줄로 요약해드릴게요.',
+              hasData ? summary : _pendingAnalysisMessage(),
               style: TextStyle(
                 fontSize: 13,
                 color: hasData ? const Color(0xFF0069FF) : Colors.black38,
@@ -688,11 +706,12 @@ class _CumulativeAnalysisScreenState extends State<CumulativeAnalysisScreen> {
                 ],
               ],
             )
-          : const Center(
+          : Center(
               child: Padding(
-                padding: EdgeInsets.symmetric(vertical: 8),
-                child: Text('아직 분석 데이터가 없어요.',
-                    style: TextStyle(fontSize: 13, color: Colors.black38)),
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(_pendingAnalysisMessage(),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 13, color: Colors.black38)),
               ),
             ),
     );
@@ -751,11 +770,13 @@ class _CumulativeAnalysisScreenState extends State<CumulativeAnalysisScreen> {
                     ],
                   ],
                 )
-              : const Center(
+              : Center(
                   child: Padding(
-                    padding: EdgeInsets.symmetric(vertical: 8),
-                    child: Text('아직 루틴 제안 데이터가 없어요.',
-                        style: TextStyle(fontSize: 13, color: Colors.black38)),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Text(_pendingAnalysisMessage(),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            fontSize: 13, color: Colors.black38)),
                   ),
                 ),
         ],

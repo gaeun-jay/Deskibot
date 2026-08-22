@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:deskibot/models/focus_session_model.dart';
 import 'package:deskibot/models/todo_model.dart';
 import 'package:deskibot/models/user_model.dart';
+import 'package:deskibot/services/api_client.dart';
 import 'package:deskibot/services/auth_service.dart';
 import 'package:deskibot/services/focus_session_service.dart';
 import 'package:deskibot/services/todo_service.dart';
@@ -27,7 +28,13 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _editingTodoId;
   final _contentController = TextEditingController();
   String? _selectedCategoryId;
-  DateTime _selectedDate = DateTime.now();
+
+  /// 할 일 카드가 지금 보여주고 있는 날짜. 카드 제목 줄의 화살표로 옮긴다.
+  /// 헤더의 날짜와 아래 "오늘의 집중 현황"은 여기에 따라오지 않고 늘 오늘이다.
+  DateTime _viewingDay = _dayOnly(DateTime.now());
+
+  /// 추가/수정 폼 안에서 고르는 날짜. 폼을 열면 [_viewingDay] 로 시작한다.
+  DateTime _selectedDate = _dayOnly(DateTime.now());
   TimeOfDay? _selectedDeadlineTime;
   String _notifyOption = '없음';
   StreamSubscription<List<Category>>? _categoriesSub;
@@ -77,6 +84,60 @@ class _HomeScreenState extends State<HomeScreen> {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   }
 
+  /// 시/분을 떼고 날짜만 남긴다. 날짜끼리 비교하려면 이게 필요하다.
+  static DateTime _dayOnly(DateTime date) =>
+      DateTime(date.year, date.month, date.day);
+
+  bool _isToday(DateTime day) => _dayOnly(day) == _dayOnly(DateTime.now());
+
+  /// 할 일 카드 제목 줄에 쓰는 표기. 예: "8월 22일 (금)"
+  String _formatViewingDay() {
+    const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+    return '${_viewingDay.month}월 ${_viewingDay.day}일 '
+        '(${weekdays[_viewingDay.weekday - 1]})';
+  }
+
+  /// 할 일 카드를 다른 날짜로 옮긴다.
+  ///
+  /// TodoService 는 싱글톤이고 마지막으로 불러온 날짜를 기억하므로, 여기서
+  /// refresh 만 해두면 이후의 추가·수정·삭제·체크가 전부 이 날짜 기준으로
+  /// 다시 불러와진다.
+  Future<void> _goToDay(DateTime day) async {
+    final target = _dayOnly(day);
+    final previous = _viewingDay;
+    setState(() {
+      _viewingDay = target;
+      // 폼이 열려 있으면 같이 옮긴다. 추가한 게 바로 이 목록에 뜨도록.
+      // 수정 중일 때는 그 할 일의 날짜를 건드리면 안 되니 놔둔다.
+      if (_showForm && _editingTodoId == null) _selectedDate = target;
+    });
+
+    try {
+      await TodoService().refresh(date: _dateToStr(target));
+    } on ApiException catch (e) {
+      // 못 불러왔으면 원래 날짜로 되돌린다. 안 그러면 도착하지 않을 목록을
+      // 기다리며 로딩 표시가 계속 돈다.
+      if (!mounted) return;
+      setState(() => _viewingDay = previous);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.userMessage)),
+      );
+    }
+  }
+
+  Future<void> _shiftDay(int days) =>
+      _goToDay(_viewingDay.add(Duration(days: days)));
+
+  Future<void> _pickViewingDay() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _viewingDay,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2035),
+    );
+    if (picked != null) await _goToDay(picked);
+  }
+
   String _timeStr(TimeOfDay? time) {
     if (time == null) return '--:--';
     return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
@@ -106,7 +167,11 @@ class _HomeScreenState extends State<HomeScreen> {
     if (picked != null) setState(() => _selectedDate = picked);
   }
 
-  void _openForm() => setState(() => _showForm = true);
+  void _openForm() => setState(() {
+        _showForm = true;
+        // 지금 보고 있는 날짜로 시작한다. 폼 안에서 다른 날짜로 바꿔도 된다.
+        _selectedDate = _viewingDay;
+      });
 
   void _closeForm() {
     _contentController.clear();
@@ -114,7 +179,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _showForm = false;
       _editingTodoId = null;
       _selectedCategoryId = null;
-      _selectedDate = DateTime.now();
+      _selectedDate = _viewingDay;
       _selectedDeadlineTime = null;
       _notifyOption = '없음';
     });
@@ -217,6 +282,15 @@ class _HomeScreenState extends State<HomeScreen> {
       await TodoService().updateTodo(_editingTodoId!, todo);
     }
     if (!mounted) return;
+
+    // 보고 있는 날짜가 아닌 다른 날짜로 저장했으면 그 날짜로 옮겨준다.
+    // 안 그러면 방금 넣은 할 일이 목록에 없어서 저장이 안 된 것처럼 보인다.
+    final savedDay = _dayOnly(_selectedDate);
+    if (savedDay != _viewingDay) {
+      await _goToDay(savedDay);
+      if (!mounted) return;
+    }
+
     _closeForm();
   }
 
@@ -603,6 +677,10 @@ class _HomeScreenState extends State<HomeScreen> {
       stream: _todosStream,
       builder: (context, snapshot) {
         final todos = snapshot.data ?? [];
+        // 스트림은 싱글톤에 하나뿐이라, 날짜를 옮기는 동안에는 아직 이전
+        // 날짜의 목록이 흐르고 있다. 제목은 새 날짜인데 목록은 옛 날짜인
+        // 상태를 보여주지 않도록, 도착할 때까지 자리만 잡아둔다.
+        final isCurrent = TodoService().loadedDate == _dateToStr(_viewingDay);
         return Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -619,41 +697,29 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      Image.asset(
-                        'assets/images/todoboard.png',
-                        width: 24,
-                        height: 24,
-                      ),
-                      const SizedBox(width: 6),
-                      const Text('오늘 할일', style: kCardTitleStyle),
-                    ],
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFEEF4FF),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      '전체 ${todos.length}',
-                      style: const TextStyle(
-                          fontSize: 12, color: Color(0xFF0069FF)),
-                    ),
-                  ),
-                ],
-              ),
+              _buildTodoListHeader(isCurrent ? todos.length : null),
               const SizedBox(height: 12),
-              if (todos.isEmpty)
+              if (!isCurrent)
                 const Center(
                   child: Padding(
-                    padding: EdgeInsets.symmetric(vertical: 16),
-                    child: Text('할일이 없습니다',
-                        style: TextStyle(color: Colors.grey)),
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                )
+              else if (todos.isEmpty)
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    child: Text(
+                      _isToday(_viewingDay)
+                          ? '오늘 할일이 없습니다'
+                          : '이 날은 할일이 없습니다',
+                      style: const TextStyle(color: Colors.grey),
+                    ),
                   ),
                 )
               else
@@ -662,6 +728,104 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       },
+    );
+  }
+
+  /// 할 일 카드 제목 줄. "◀ 8월 22일 (금) ▶ [오늘] [전체 3]"
+  ///
+  /// [count] 가 null 이면 아직 그 날짜 목록이 도착하지 않은 상태다.
+  Widget _buildTodoListHeader(int? count) {
+    return Row(
+      children: [
+        // 화살표·날짜는 남는 폭을 나눠 쓰고, 좁으면 날짜가 줄어든다.
+        // 오른쪽 칩들은 항상 제 크기를 지킨다.
+        Expanded(
+          child: Row(
+            children: [
+              Image.asset(
+                'assets/images/todoboard.png',
+                width: 24,
+                height: 24,
+              ),
+              const SizedBox(width: 2),
+              _buildDayArrow(Icons.chevron_left, () => _shiftDay(-1)),
+              Flexible(
+                child: GestureDetector(
+                  onTap: _pickViewingDay,
+                  behavior: HitTestBehavior.opaque,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 2,
+                      vertical: 4,
+                    ),
+                    child: Text(
+                      _formatViewingDay(),
+                      style: kCardTitleStyle,
+                      maxLines: 1,
+                      softWrap: false,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+              ),
+              _buildDayArrow(Icons.chevron_right, () => _shiftDay(1)),
+            ],
+          ),
+        ),
+        if (!_isToday(_viewingDay)) ...[
+          // 채워진 파란 칩으로 두면 "지금 보고 있는 날이 오늘"이라는 상태 표시처럼
+          // 읽힌다. 되돌아가기 화살표 + "오늘로" 로 눌러야 할 버튼임을 분명히 한다.
+          GestureDetector(
+            onTap: () => _goToDay(DateTime.now()),
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                border: Border.all(color: const Color(0xFF0069FF)),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.undo, size: 13, color: Color(0xFF0069FF)),
+                  SizedBox(width: 3),
+                  Text(
+                    '오늘로',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF0069FF),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+        ],
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: const Color(0xFFEEF4FF),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            '전체 ${count ?? '-'}',
+            style: const TextStyle(fontSize: 12, color: Color(0xFF0069FF)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDayArrow(IconData icon, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Icon(icon, size: 20, color: const Color(0xFF6286B8)),
+      ),
     );
   }
 

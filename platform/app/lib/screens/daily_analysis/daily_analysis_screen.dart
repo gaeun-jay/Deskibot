@@ -68,7 +68,17 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
     super.initState();
     _loadDailyData();
     // 홈 화면 등 다른 곳에서 투두를 추가/완료 처리해도 곧바로 반영되도록 함
-    _todoSub = TodoService().getTodayTodos().listen(_onTodosUpdated);
+    //
+    // TodoService 의 스트림은 싱글톤에 하나뿐이라, 홈에서 화살표로 다른
+    // 날짜를 보면 그 날짜의 목록이 여기로도 흘러들어온다. 이 화면의 수치는
+    // "오늘"이어야 하므로, 오늘 것이 아니면 오늘 것을 따로 불러온다.
+    _todoSub = TodoService().getTodayTodos().listen((todos) {
+      if (TodoService().loadedDate == _todayStr()) {
+        _onTodosUpdated(todos);
+      } else {
+        _reloadTodayTodos();
+      }
+    });
 
     // 로봇이 졸음/폰 사용을 감지해 끝날 때(detection_end)마다 통계를 다시 불러옴
     FocusWebSocketService.instance.connect();
@@ -96,6 +106,15 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
     _wsSub?.cancel();
     _dateCheckTimer?.cancel();
     super.dispose();
+  }
+
+  /// 스트림에 흐른 목록이 오늘 것이 아닐 때, 오늘 것만 따로 불러와 수치를 맞춘다.
+  Future<void> _reloadTodayTodos() async {
+    try {
+      _onTodosUpdated(await TodoService().getTodosForDate(_todayStr()));
+    } catch (_) {
+      // 통계 갱신 실패로 화면이 깨질 이유는 없다. 다음 이벤트에 다시 시도한다.
+    }
   }
 
   void _onTodosUpdated(List<TodoModel> todos) {

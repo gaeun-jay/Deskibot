@@ -435,6 +435,12 @@ class _CategoryTabState extends State<_CategoryTab> {
     }
   }
 
+  void _showLockedMessage(Category c) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("'${c.name}'는 기본 카테고리라 바꿀 수 없어요")),
+    );
+  }
+
   Color _parseColor(String hex) {
     return Color(int.parse('FF${hex.replaceFirst('#', '')}', radix: 16));
   }
@@ -526,23 +532,47 @@ class _CategoryTabState extends State<_CategoryTab> {
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              c.name,
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    c.name,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (c.isLocked) ...[
+                  const SizedBox(width: 6),
+                  const Icon(Icons.lock_outline,
+                      size: 14, color: Color(0xFF9AA0A6)),
+                ],
+              ],
             ),
           ),
+          // "기타"는 분류가 애매한 할 일을 받는 자리라 수정·삭제를 막는다.
+          // 버튼을 없애면 줄마다 높이가 달라져 목록이 들쭉날쭉해지므로,
+          // 자리는 그대로 두고 흐리게 + 눌러도 안내만 띄운다.
           _iconBoxButton(
             icon: Icons.edit_outlined,
             background: const Color(0xFFF0F0F0),
-            iconColor: const Color(0xFF9AA0A6),
-            onTap: () => _openEditor(category: c),
+            iconColor:
+                c.isLocked ? const Color(0xFFD0D0D0) : const Color(0xFF9AA0A6),
+            onTap: c.isLocked
+                ? () => _showLockedMessage(c)
+                : () => _openEditor(category: c),
           ),
           const SizedBox(width: 8),
           _iconBoxButton(
             icon: Icons.delete_outline,
-            background: const Color(0xFFFDE9E9),
-            iconColor: const Color(0xFFE05353),
-            onTap: () => _delete(c),
+            background: c.isLocked
+                ? const Color(0xFFF0F0F0)
+                : const Color(0xFFFDE9E9),
+            iconColor:
+                c.isLocked ? const Color(0xFFD0D0D0) : const Color(0xFFE05353),
+            onTap: c.isLocked ? () => _showLockedMessage(c) : () => _delete(c),
           ),
         ],
       ),
