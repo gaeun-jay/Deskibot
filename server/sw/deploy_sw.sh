@@ -80,11 +80,15 @@ rollback() {
 }
 
 sudo systemctl restart deskibot-sw.service || rollback
-sleep 3
-sudo systemctl is-active --quiet deskibot-sw.service || rollback
-# /api/health 는 DB 조회까지 하고 나서 ok 를 준다. 커넥션 풀이 살아있는지도
-# 이 한 줄로 함께 확인된다.
-curl -fsS http://127.0.0.1:8001/api/health >/dev/null || rollback
+
+# 고정 sleep 은 취약하다. 실제로 서비스가 정상 기동했는데 health 체크가 먼저
+# 실행돼 롤백이 걸린 적이 있다(2026-08-22, sw). 기동 완료를 기다린다.
+for i in $(seq 1 30); do
+    sudo systemctl is-active --quiet deskibot-sw.service || rollback
+    curl -fsS --max-time 2 http://127.0.0.1:8001/api/health >/dev/null 2>&1 && break
+    [ "$i" = "30" ] && { echo "[check] 30초 동안 health 응답 없음" >&2; rollback; }
+    sleep 1
+done
 
 echo "[check] 서비스 active + health ok"
 sudo journalctl -u deskibot-sw.service -n 30 --no-pager
