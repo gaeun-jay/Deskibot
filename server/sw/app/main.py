@@ -1,7 +1,5 @@
 import asyncio
-import hmac
 import logging
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -259,24 +257,6 @@ async def focus_websocket(websocket: WebSocket):
                 user_id = str(verify_token(provided_token))
             except AuthError:
                 user_id = None
-
-            # 전환 기간용 뒷문. 예전 테스트 스크립트가 쓰던 고정 문자열
-            # 방식으로, 모든 접속이 TEST_USER_ID 한 사람으로 잡힌다.
-            # .env 에서 WS_TEST_TOKEN 을 지우면 이 경로는 닫힌다.
-            if user_id is None:
-                legacy_token = os.environ.get("WS_TEST_TOKEN", "")
-                test_user_id = os.environ.get("TEST_USER_ID", "")
-
-                if (
-                    legacy_token
-                    and test_user_id
-                    and hmac.compare_digest(provided_token, legacy_token)
-                ):
-                    logger.warning(
-                        "WS 접속이 WS_TEST_TOKEN 으로 인증됨 "
-                        "(전환 기간용, JWT 로 옮길 것)"
-                    )
-                    user_id = test_user_id
 
             if user_id is None:
                 await websocket.close(
