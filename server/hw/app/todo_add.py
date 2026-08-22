@@ -11,7 +11,7 @@ from datetime import datetime
 from datetime import time as time_cls
 from typing import Any
 
-from todo_matching import normalize_todo_text
+from app.todo_matching import normalize_todo_text
 
 # 앱이 제공하는 마감 알림 선택지는 "마감 30분 전"과 "마감 1시간 전" 둘뿐이다.
 NOTIFY_BEFORE_CHOICES = (30, 60)

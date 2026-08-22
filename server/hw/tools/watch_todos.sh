@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 할 일 DB 실시간 모니터를 EC2에서 띄운다.
 #
-#   bash server/hw/watch_todos.sh [갱신초]    # 기본 3초
+#   bash server/hw/tools/watch_todos.sh [갱신초]    # 기본 3초
 #
 # 읽기 전용이며 운영 서비스는 건드리지 않는다. Ctrl+C로 종료.
 set -euo pipefail
