@@ -1,0 +1,44 @@
+# Deskibot SW API · WebSocket 서버 (EC2 systemd 유닛)
+#
+# 설치:
+#   sudo cp server/sw/deskibot-sw.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl restart deskibot-sw
+#
+# 이 파일은 서버에만 있던 것을 레포로 옮긴 것이다. 인스턴스가 날아가면
+# 서비스 정의를 손으로 복원해야 했다.
+#
+# ────────────────────────────────────────────────────────────────────
+#  ⚠ --workers 1 은 성능 설정이 아니라 정합성 조건이다. 늘리지 말 것.
+#
+#  app/realtime.py 의 연결 목록(manager)이 프로세스 메모리에 있다.
+#  워커를 2개 이상 두면 앱과 로봇이 서로 다른 워커에 붙을 수 있고,
+#  그러면 한쪽에서 보낸 focus_state 가 다른 쪽에 전달되지 않는다.
+#  요청은 200 으로 잘 끝나는데 상대방 화면만 안 바뀌는 형태라
+#  원인을 찾기 매우 어렵다.
+#
+#  확장이 필요해지면 워커를 늘리기 전에 연결 상태를 프로세스 밖으로
+#  빼야 한다. Redis Pub/Sub 로 focus_state 를 브로드캐스트하고 각
+#  워커가 자기에게 붙은 소켓에만 중계하는 형태가 표준적인 경로다.
+#  그 전까지는 이 값이 1이어야 한다.
+# ────────────────────────────────────────────────────────────────────
+
+[Unit]
+Description=Deskibot SW API and WebSocket Server
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/Deskibot/server/sw
+Environment="PATH=/home/ubuntu/Deskibot/server/sw/.venv/bin"
+ExecStart=/home/ubuntu/Deskibot/server/sw/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8001 --workers 1
+
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
