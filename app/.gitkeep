@@ -1,0 +1,13 @@
+Flutter 앱이 들어갈 자리.
+
+sw-temp 브랜치의 platform/app/ 을 여기로 옮긴다.
+
+    git checkout sw-temp
+    git mv platform/app app
+    git rm -r platform
+
+주의 — .gitignore 의 `platform/app/server/` 규칙을 `app/server/` 로 함께
+고쳐야 한다. 그 폴더에는 구 Node 분석 서버의 node_modules 와 Firebase
+개인키가 들어 있어서, 규칙이 풀리면 통째로 커밋된다.
+
+병합이 끝나면 이 파일을 지운다.

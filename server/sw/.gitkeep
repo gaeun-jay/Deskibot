@@ -1,0 +1,8 @@
+FastAPI API · WebSocket 서버가 들어갈 자리.
+
+sw-temp 브랜치의 server/sw/ 가 경로 변경 없이 그대로 들어온다.
+
+HW팀이 이미 이 경로에 커밋해 둔 것이 있다 (커넥션 풀, deploy_sw.sh,
+deskibot-sw.service). sw-temp 를 병합하면 함께 들어온다.
+
+병합이 끝나면 이 파일을 지운다.
