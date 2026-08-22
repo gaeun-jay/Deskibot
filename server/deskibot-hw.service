@@ -1,0 +1,32 @@
+# Deskibot HW 음성 서버 (EC2 systemd 유닛)
+#
+# 설치:
+#   sudo cp server/deskibot-hw.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl restart deskibot-hw
+#
+# 이 파일은 서버에만 있던 것을 레포로 옮긴 것이다. 인스턴스가 날아가면
+# 서비스 정의를 손으로 복원해야 했다.
+#
+# --timeout 120: 음성 한 건이 STT → Claude → TTS 를 거치므로 기본값(30초)
+# 으로는 gunicorn 이 워커를 죽인다. 긴 발화에서 응답이 끊기면 이 값부터 볼 것.
+#
+# --workers 1: sw 와 달리 hw 는 프로세스 메모리에 상태를 두지 않으므로
+# 정합성 문제로 1인 것은 아니다. t3.small 에서 STT/TTS 호출이 메모리를
+# 많이 쓰기 때문이고, 늘리려면 인스턴스 사양부터 봐야 한다.
+# (sw 쪽 --workers 1 은 성격이 다르다 — server/sw/deskibot-sw.service 참고)
+
+[Unit]
+Description=Deskibot HW Server
+After=network.target
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/Deskibot/server/hw
+Environment="PATH=/home/ubuntu/Deskibot/server/hw/.venv/bin"
+ExecStart=/home/ubuntu/Deskibot/server/hw/.venv/bin/gunicorn --workers 1 --bind 127.0.0.1:8000 --timeout 120 server:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
