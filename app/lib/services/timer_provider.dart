@@ -179,17 +179,18 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
           pauseEvents: [..._stopwatch.pauseEvents, pauseEvent],
           clearPausedAt: true,
         );
-        // ESP32 resume 시 서버 상태 업데이트
-        _service.resumeStopwatch(
-            _stopwatch.sessionId, now.difference(pausedAt).inSeconds);
+        // 로봇이 이미 서버에서 resume 처리했으므로 앱은 서버에 중복 요청하지 않는다.
         WakelockPlus.enable();
         _startTicker();
       }
 
-      // ── ESP32가 세션 종료한 경우 ──
-      // type을 유지하므로 type으로 뽀모도로/스톱워치 구분
-      // sessionId가 비어있고 state가 'end'면 종료 신호
-      if (state == 'end' && sessionId.isEmpty) {
+      // ── ESP32/자리이탈로 세션 종료한 경우 ──
+      // session == null → sessionId 빈 문자열 (초기화 신호)
+      // session 있음  → sessionId 가 현재 진행 중인 세션과 일치할 때만 종료
+      if (state == 'end' &&
+          (sessionId.isEmpty ||
+           sessionId == _pomodoro.sessionId ||
+           sessionId == _stopwatch.sessionId)) {
         if (type == 'pomodoro' &&
             _pomodoro.status != TimerStatus.idle &&
             _pomodoro.status != TimerStatus.finished) {
@@ -200,7 +201,7 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
       }
 
-      // ── 알람 제어 (뽀모도로 실행 중에만) ──
+      // ── 알람 제어 + 감지 이벤트 누적 (뽀모도로 실행 중에만) ──
       if (_pomodoro.status == TimerStatus.running) {
         final wasAlarming = _prevDrowsy || _prevPhone;
         final isNowAlarming = isDrowsy || isPhone;
@@ -208,6 +209,45 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
           _startAlarm();
         } else if (wasAlarming && !isNowAlarming) {
           _stopAlarm();
+        }
+
+        // 졸음 시작 → drowsyStartedAt 기록 (알림 배너 메시지 구분용)
+        if (!_prevDrowsy && isDrowsy) {
+          _pomodoro = _pomodoro.copyWith(drowsyStartedAt: now);
+        }
+        // 졸음 종료 → DrowsyEvent 누적 + startedAt 초기화
+        if (_prevDrowsy && !isDrowsy && _pomodoro.drowsyStartedAt != null) {
+          final event = DrowsyEvent(
+            startDate: _dateStr(_pomodoro.drowsyStartedAt!),
+            startTime: _timeStr(_pomodoro.drowsyStartedAt!),
+            endDate: _dateStr(now),
+            endTime: _timeStr(now),
+            totalDuration:
+                now.difference(_pomodoro.drowsyStartedAt!).inMinutes,
+          );
+          _pomodoro = _pomodoro.copyWith(
+            drowsyEvents: [..._pomodoro.drowsyEvents, event],
+            clearDrowsyStart: true,
+          );
+        }
+        // 폰 시작 → phoneStartedAt 기록
+        if (!_prevPhone && isPhone) {
+          _pomodoro = _pomodoro.copyWith(phoneStartedAt: now);
+        }
+        // 폰 종료 → PhoneEvent 누적 + startedAt 초기화
+        if (_prevPhone && !isPhone && _pomodoro.phoneStartedAt != null) {
+          final event = PhoneEvent(
+            startDate: _dateStr(_pomodoro.phoneStartedAt!),
+            startTime: _timeStr(_pomodoro.phoneStartedAt!),
+            endDate: _dateStr(now),
+            endTime: _timeStr(now),
+            totalDuration:
+                now.difference(_pomodoro.phoneStartedAt!).inMinutes,
+          );
+          _pomodoro = _pomodoro.copyWith(
+            phoneEvents: [..._pomodoro.phoneEvents, event],
+            clearPhoneStart: true,
+          );
         }
       }
 
