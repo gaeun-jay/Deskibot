@@ -14,7 +14,7 @@
 ## 1. 로컬 검증
 
 ```bash
-cd /Users/gaeun/Documents/PlatformIO/Projects/esp/server
+cd <저장소>/server/hw
 python3 -m py_compile server.py todo_matching.py todo_add.py register_test_device.py
 python3 -m unittest -v test_todo_matching test_todo_add
 ```
@@ -24,7 +24,7 @@ python3 -m unittest -v test_todo_matching test_todo_add
 서비스를 건드리기 전에 EC2에서 백업 디렉터리를 만들고 현재 파일을 보존한다.
 
 > `deploy_hw.sh`를 쓰면 이 절은 건너뛴다. 스크립트가 `backups/<배포시각>-<라벨>`로
-> 알아서 만든다(`bash server/deploy_hw.sh clova-switch`). 아래는 손으로 배포할 때만 쓴다.
+> 알아서 만든다(`bash server/hw/deploy_hw.sh clova-switch`). 아래는 손으로 배포할 때만 쓴다.
 
 백업 디렉터리는 **배포마다 새 이름**을 쓴다. 이름을 재사용하면 두 방향으로 다치는데,
 둘 다 조용히 일어나서 사고 때까지 모른다.

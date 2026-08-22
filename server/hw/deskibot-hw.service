@@ -1,7 +1,7 @@
 # Deskibot HW 음성 서버 (EC2 systemd 유닛)
 #
 # 설치:
-#   sudo cp server/deskibot-hw.service /etc/systemd/system/
+#   sudo cp server/hw/deskibot-hw.service /etc/systemd/system/
 #   sudo systemctl daemon-reload && sudo systemctl restart deskibot-hw
 #
 # 이 파일은 서버에만 있던 것을 레포로 옮긴 것이다. 인스턴스가 날아가면

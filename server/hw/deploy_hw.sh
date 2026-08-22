@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # EC2 HW 음성 서버 배포 (deskibot-osaka)
 #
-#   bash server/deploy_hw.sh [라벨]
+#   bash server/hw/deploy_hw.sh [라벨]
 #
 # 라벨은 백업 디렉터리 이름에 붙는 메모다 (생략하면 manual).
-#   bash server/deploy_hw.sh clova-switch
+#   bash server/hw/deploy_hw.sh clova-switch
 #     → backups/20260822-152202-clova-switch
 # 앞에 배포 시각이 붙으므로 같은 라벨을 재사용해도 백업이 겹치지 않는다.
 #
