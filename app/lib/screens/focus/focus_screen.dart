@@ -639,7 +639,7 @@ class _SessionItem extends StatelessWidget {
     final String label;
     if (type == 'pomodoro') {
       if (isIncomplete) {
-        label = actualSec > 0 ? '${_fmtDuration(actualSec)} 중간 종료' : '뽀모도로 중간 종료';
+        label = actualSec > 0 ? _fmtDuration(actualSec) : '뽀모도로';
       } else {
         label = plannedMin > 0 ? '$plannedMin분 완료' : '뽀모도로 완료';
       }
