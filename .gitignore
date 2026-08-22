@@ -27,11 +27,6 @@
 # 서비스 계정 키. 이게 올라가면 Firebase 프로젝트 전체가 열린다.
 **/serviceAccountKey.json
 
-# 구 Node 분석 서버. server/sw 의 FastAPI 로 대체됐고 폐기 예정이다
-# (server/sw/ANALYSIS_PORT.md §5). 그때까지 실수로 커밋되지 않게 막아둔다 —
-# node_modules 와 Firebase 개인키가 통째로 들어 있다.
-platform/app/server/
-
 # IDE
 .idea/
 .vscode/
