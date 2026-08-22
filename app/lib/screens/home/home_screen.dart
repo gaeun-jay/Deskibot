@@ -11,6 +11,7 @@ import 'package:deskibot/services/todo_service.dart';
 import 'package:deskibot/services/user_service.dart';
 import 'package:deskibot/screens/auth/login_screen.dart';
 import 'package:deskibot/theme/app_styles.dart';
+import 'package:deskibot/widgets/app_bottom_nav.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -49,13 +50,26 @@ class _HomeScreenState extends State<HomeScreen> {
     _categoriesSub = UserService().watchCategories().listen((categories) {
       if (mounted) setState(() => _categories = categories);
     });
+    // 하단 탭은 IndexedStack 이라 화면이 살아있는 채로 가려질 뿐이다.
+    // 집중 화면에서 세션을 끝내고 돌아와도 initState 가 다시 돌지 않으니,
+    // 홈이 다시 보이는 순간을 직접 잡아서 집중 현황을 새로 불러온다.
+    BottomNavState.index.addListener(_onTabChanged);
   }
 
   @override
   void dispose() {
+    BottomNavState.index.removeListener(_onTabChanged);
     _contentController.dispose();
     _categoriesSub?.cancel();
     super.dispose();
+  }
+
+  void _onTabChanged() {
+    if (BottomNavState.index.value != BottomNavState.homeIndex) return;
+    FocusSessionService().refresh().catchError((e) {
+      debugPrint('[집중현황] 갱신 실패: $e');
+      return const <FocusSessionModel>[];
+    });
   }
 
   Color _categoryColor(String hex) {
@@ -90,6 +104,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool _isToday(DateTime day) => _dayOnly(day) == _dayOnly(DateTime.now());
 
+  /// 지난 날짜인지. 할일 등록은 오늘부터만 된다.
+  bool _isPastDay(DateTime day) =>
+      _dayOnly(day).isBefore(_dayOnly(DateTime.now()));
+
   /// 할 일 카드 제목 줄에 쓰는 표기. 예: "8월 22일 (금)"
   String _formatViewingDay() {
     const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
@@ -109,7 +127,11 @@ class _HomeScreenState extends State<HomeScreen> {
       _viewingDay = target;
       // 폼이 열려 있으면 같이 옮긴다. 추가한 게 바로 이 목록에 뜨도록.
       // 수정 중일 때는 그 할 일의 날짜를 건드리면 안 되니 놔둔다.
-      if (_showForm && _editingTodoId == null) _selectedDate = target;
+      // 지난 날짜로는 따라가지 않는다 — 저장할 수 없는 날짜를 폼에 심어두면
+      // 저장 버튼을 눌러야 비로소 막히는 막다른 길이 된다.
+      if (_showForm && _editingTodoId == null && !_isPastDay(target)) {
+        _selectedDate = target;
+      }
     });
 
     try {
@@ -158,10 +180,16 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _pickDate() async {
+    // 지난 날짜에는 새로 등록할 수 없다. 다만 수정 중이라면 그 할 일이 이미
+    // 과거에 있을 수 있으므로, 그 날짜만은 고를 수 있게 열어둔다.
+    final today = _dayOnly(DateTime.now());
+    final earliest =
+        _selectedDate.isBefore(today) ? _dayOnly(_selectedDate) : today;
+
     final picked = await showDatePicker(
       context: context,
       initialDate: _selectedDate,
-      firstDate: DateTime(2020),
+      firstDate: earliest,
       lastDate: DateTime(2035),
     );
     if (picked != null) setState(() => _selectedDate = picked);
@@ -170,7 +198,10 @@ class _HomeScreenState extends State<HomeScreen> {
   void _openForm() => setState(() {
         _showForm = true;
         // 지금 보고 있는 날짜로 시작한다. 폼 안에서 다른 날짜로 바꿔도 된다.
-        _selectedDate = _viewingDay;
+        // 지난 날짜면 버튼이 아예 안 눌리지만, 다른 경로로 열릴 때를 대비해
+        // 오늘로 끌어올려 둔다.
+        _selectedDate =
+            _isPastDay(_viewingDay) ? _dayOnly(DateTime.now()) : _viewingDay;
       });
 
   void _closeForm() {
@@ -245,6 +276,17 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       return;
     }
+    // 지난 날짜로는 새로 만들 수 없다. 폼과 날짜 선택기에서 이미 막고 있지만,
+    // 자정을 넘긴 채 폼을 열어둔 경우처럼 빠져나갈 틈이 있어 여기서 한 번 더
+    // 본다. 수정은 예외다 — 과거 할 일의 내용을 고치는 건 막을 이유가 없다.
+    if (_editingTodoId == null &&
+        _dayOnly(_selectedDate).isBefore(_dayOnly(DateTime.now()))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('지난 날짜에는 할일을 추가할 수 없어요')),
+      );
+      return;
+    }
+
     final deadlineBase = _selectedDeadlineTime;
 
     if (_notifyOption != '없음' && deadlineBase == null) {
@@ -435,35 +477,55 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
             const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () => _showForm ? _closeForm() : _openForm(),
-                icon: Icon(
-                  _showForm ? Icons.close : Icons.add,
-                  color: Colors.white,
-                  size: 20,
-                ),
-                label: Text(
-                  _showForm ? '닫기' : '할일 추가하기',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                  ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0x4D0073FF),
-                  elevation: 0,
-                  shadowColor: Colors.transparent,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                ),
-              ),
-            ),
+            _buildAddTodoButton(),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// 헤더의 할일 추가 버튼.
+  ///
+  /// 지난 날짜를 보고 있으면 눌리지 않는다. 다만 회색으로 죽이기만 하면
+  /// 왜 안 눌리는지 알 수 없으므로, 글자로 이유를 말하게 했다. 버튼이 있는
+  /// 헤더에는 오늘 날짜가 적혀 있고 날짜 화살표는 아래 카드에 있어서,
+  /// 이유를 안 적으면 연결이 잘 안 된다.
+  Widget _buildAddTodoButton() {
+    // 폼이 열려 있으면 날짜와 무관하게 '닫기' 로 동작해야 한다.
+    final blocked = !_showForm && _isPastDay(_viewingDay);
+
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: blocked ? null : () => _showForm ? _closeForm() : _openForm(),
+        icon: Icon(
+          blocked
+              ? Icons.event_busy
+              : (_showForm ? Icons.close : Icons.add),
+          color: Colors.white.withValues(alpha: blocked ? 0.6 : 1),
+          size: 20,
+        ),
+        label: Text(
+          blocked
+              ? '지난 날짜에는 추가할 수 없어요'
+              : (_showForm ? '닫기' : '할일 추가하기'),
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: blocked ? 0.6 : 1),
+            fontWeight: FontWeight.bold,
+            fontSize: 15,
+          ),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0x4D0073FF),
+          // 파란 헤더 위라서 기본 회색 비활성 색을 쓰면 떠 보인다.
+          // 헤더 색을 살짝 덮는 정도로만 눌러 앉힌다.
+          disabledBackgroundColor: Colors.white.withValues(alpha: 0.12),
+          elevation: 0,
+          shadowColor: Colors.transparent,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(30),
+          ),
         ),
       ),
     );
