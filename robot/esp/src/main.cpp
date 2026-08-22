@@ -237,6 +237,20 @@ void handle_serial() {
         } else {
             voice_toggle_record();
         }
+    } else if (input.startsWith("wifi ")) {
+        // WiFi 전환: NVS에 저장 + 재연결 (재플래싱 불필요).
+        // SSID 와 비밀번호는 마지막 공백으로 가른다. SSID 에 공백이 있어도
+        // 되지만 비밀번호에는 쓸 수 없다 — 실제로 공백 든 비밀번호는 드물고,
+        // 공백 든 SSID("iPhone 15" 같은)가 훨씬 흔하다.
+        // 인자가 하나뿐이면 개방망으로 보고 비밀번호를 비운다.
+        String arg = input.substring(5);
+        arg.trim();
+        int sp = arg.lastIndexOf(' ');
+        String ssid = (sp < 0) ? arg : arg.substring(0, sp);
+        String pass = (sp < 0) ? ""  : arg.substring(sp + 1);
+        ssid.trim();
+        pass.trim();
+        wifi_set_credentials(ssid.c_str(), pass.c_str());
     } else if (input.startsWith("token ")) {
         // 테스트 유저 전환: NVS에 device_token 저장 + WS 재연결 (재플래싱 불필요)
         if (_voice_state != VOICE_IDLE) {
