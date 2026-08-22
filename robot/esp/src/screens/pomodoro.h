@@ -21,7 +21,13 @@ LV_IMAGE_DECLARE(bg_pomodoro_end);
 int _pomo_state         = POMO_IDLE;
 static uint32_t _pomo_totalSec  = 0;
 static uint32_t _pomo_remainSec = 0;
-static uint32_t _pomo_lastTick  = 0;
+// 남은 시간을 "몇 번 깎았나"로 세면 루프가 1초 넘게 막힐 때마다 초과분이
+// 버려져 오차가 영구히 쌓인다. 실측에서 25분 세션이 850초 경과 시점에
+// 약 200초(22%)를 덜 깎았다 — 할 일 페치(HTTPS+TLS)·음성 업로드·LVGL
+// 렌더링이 낄 때마다 밀린 것이다. 그래서 기준점을 두고 매번 실제 경과에서
+// 역산한다. 스톱워치가 처음부터 쓰던 방식이다.
+static uint32_t _pomo_baseMs    = 0;   // 이번 구간의 시작 millis()
+static uint32_t _pomo_baseRemain = 0;  // 그 시점의 남은 초
 
 // ─── 백엔드/시간 헬퍼 전방 선언 (나중에 include됨) ──────────────────────────
 void get_iso_now(char *buf, size_t len);
@@ -156,11 +162,14 @@ static void _pomo_update_timer_label() {
 // ─── LVGL 타이머 콜백 ────────────────────────────────────────────────────────
 static void pomo_timer_cb(lv_timer_t *timer) {
     if (_pomo_state != POMO_RUNNING) return;
-    uint32_t now = millis();
-    if (now - _pomo_lastTick < 1000) return;
-    _pomo_lastTick = now;
-    if (_pomo_remainSec > 0) {
-        _pomo_remainSec--;
+
+    // 기준점부터 실제로 몇 초 지났는지 매번 다시 계산한다. 루프가 몇 초
+    // 막혔다 돌아와도 그 자리에서 정확한 값이 나오므로 오차가 누적되지 않는다.
+    uint32_t elapsed = (millis() - _pomo_baseMs) / 1000;
+    uint32_t remain  = (elapsed >= _pomo_baseRemain) ? 0
+                                                     : _pomo_baseRemain - elapsed;
+    if (remain != _pomo_remainSec) {
+        _pomo_remainSec = remain;
         _pomo_update_timer_label();
     }
     if (_pomo_remainSec == 0) {
@@ -190,7 +199,8 @@ static void _pomo_start(int minutes) {
     _pomo_state          = POMO_RUNNING;
     _pomo_totalSec       = (uint32_t)(minutes * 60);
     _pomo_remainSec      = _pomo_totalSec;
-    _pomo_lastTick       = millis();
+    _pomo_baseMs         = millis();
+    _pomo_baseRemain     = _pomo_remainSec;
     _pomo_update_timer_label();
     _pomo_update_ui();
     Serial.printf("[Pomo] %d분 시작 요청\n", minutes);
@@ -292,7 +302,8 @@ void pomo_backend_sync(const char *state, int duration, const char *started_at,
         // focus_end를 보내게 한다.
         _pomo_remainSec      = (elapsed >= _pomo_totalSec) ? 0
                                                           : _pomo_totalSec - elapsed;
-        _pomo_lastTick       = millis();
+        _pomo_baseMs         = millis();
+        _pomo_baseRemain     = _pomo_remainSec;
         _pomo_update_timer_label();
         _pomo_update_ui();
         Serial.printf("[Pomo] 서버 세션 복원: %d분 중 %us 경과 → 남은 %us\n",
