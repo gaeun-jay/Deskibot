@@ -45,15 +45,24 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   final _ringtone = FlutterRingtonePlayer();
 
-  /// 마지막으로 관찰한 "집중 세션이 도는 중" 여부.
-  /// 세션이 시작·종료되는 순간을 잡아내기 위한 것이다.
-  bool _focusActive = false;
+  /// 마지막으로 관찰한 뽀모도로 진행 여부. 알림 보류의 기준이다.
+  bool _pomodoroActive = false;
 
-  /// 집중 세션이 진행 중인지. 뽀모도로든 스톱워치든, 실행 중이든 일시정지든
-  /// 세션이 열려 있으면 집중 중으로 본다.
-  bool get _isFocusActive =>
+  /// 마지막으로 관찰한 집중 세션 진행 여부. 집중 현황 갱신의 기준이다.
+  bool _sessionActive = false;
+
+  /// 뽀모도로가 도는 중인지. 실행 중이든 일시정지든 세션이 열려 있으면 참이다.
+  ///
+  /// 알림 보류는 여기에만 걸린다. 스톱워치 중에는 알림이 와야 한다는 게
+  /// 팀 결정이라 아래 [_isSessionActive] 와 기준을 나눠 뒀다.
+  bool get _isPomodoroActive =>
       _pomodoro.status == TimerStatus.running ||
-      _pomodoro.status == TimerStatus.paused ||
+      _pomodoro.status == TimerStatus.paused;
+
+  /// 집중 세션이 열려 있는지. 이쪽은 스톱워치도 포함한다 — 스톱워치로 쌓은
+  /// 시간도 "오늘의 집중 현황" 에 들어가므로 끝나면 똑같이 다시 불러와야 한다.
+  bool get _isSessionActive =>
+      _isPomodoroActive ||
       _stopwatch.status == TimerStatus.running ||
       _stopwatch.status == TimerStatus.paused;
 
@@ -69,36 +78,45 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
     super.notifyListeners();
   }
 
+  /// 두 가지를 각자의 기준으로 따로 본다. 한 덩어리로 묶으면 스톱워치를
+  /// 알림 보류에서 빼는 순간 집중 현황 갱신까지 같이 빠진다.
+  ///
+  /// 실패가 타이머를 망가뜨리면 안 되므로 예외는 삼키고 로그만 남긴다.
+  /// 알림이 안 걸리는 것보다 집중 세션이 끊기는 게 더 나쁘다.
   void _syncFocusSideEffects() {
-    final active = _isFocusActive;
-    if (active == _focusActive) return;
-    _focusActive = active;
-
-    // 어느 쪽이든 실패가 타이머를 망가뜨리면 안 되므로 예외는 삼키고 로그만
-    // 남긴다. 알림이 안 걸리는 것보다 집중 세션이 끊기는 게 더 나쁘다.
-    if (active) {
-      // 집중 중에는 할 일 마감 알림이 뜨지 않게 막는다.
-      NotificationService.instance.suspend().catchError(
-            (e) => debugPrint('[알림] 보류 실패: $e'),
-          );
-      return;
+    // ── 알림 보류: 뽀모도로만 ──
+    final pomodoroActive = _isPomodoroActive;
+    if (pomodoroActive != _pomodoroActive) {
+      _pomodoroActive = pomodoroActive;
+      if (pomodoroActive) {
+        NotificationService.instance.suspend().catchError(
+              (e) => debugPrint('[알림] 보류 실패: $e'),
+            );
+      } else {
+        NotificationService.instance.resume().catchError(
+              (e) => debugPrint('[알림] 복구 실패: $e'),
+            );
+      }
     }
 
-    NotificationService.instance.resume().catchError(
-          (e) => debugPrint('[알림] 복구 실패: $e'),
-        );
-
-    // 세션이 끝났으니 홈의 "오늘의 집중 현황"을 다시 불러온다.
-    // 서버가 focus_end 를 받아 집계를 마칠 틈을 조금 준다 — 곧바로 부르면
-    // 방금 끝난 세션이 아직 안 잡힌 예전 값을 그대로 받는다.
-    Future.delayed(const Duration(seconds: 2), () {
-      FocusSessionService().refresh().catchError(
-        (e) {
-          debugPrint('[집중현황] 갱신 실패: $e');
-          return const <FocusSessionModel>[];
-        },
-      );
-    });
+    // ── 집중 현황 갱신: 뽀모도로 + 스톱워치 ──
+    final sessionActive = _isSessionActive;
+    if (sessionActive != _sessionActive) {
+      _sessionActive = sessionActive;
+      if (!sessionActive) {
+        // 세션이 끝났으니 홈의 "오늘의 집중 현황" 을 다시 불러온다.
+        // 서버가 focus_end 를 받아 집계를 마칠 틈을 조금 준다 — 곧바로
+        // 부르면 방금 끝난 세션이 아직 안 잡힌 예전 값을 그대로 받는다.
+        Future.delayed(const Duration(seconds: 2), () {
+          FocusSessionService().refresh().catchError(
+            (e) {
+              debugPrint('[집중현황] 갱신 실패: $e');
+              return const <FocusSessionModel>[];
+            },
+          );
+        });
+      }
+    }
   }
 
   // ══════════════════════════════════════════════════════════
