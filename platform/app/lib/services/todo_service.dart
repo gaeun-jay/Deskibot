@@ -17,7 +17,14 @@ class TodoService {
 
   factory TodoService() => _instance;
 
-  TodoService._internal();
+  TodoService._internal() { 
+    // 자정이 지나도 refresh()를 안 부르면 날짜가 어제에 멈춰있음 따라서 1분마다 날짜가 바뀌었는지 확인하여 새로 불러옴
+    Timer.periodic(const Duration(minutes: 1), (_) {
+      if (_loadedDate != null && _loadedDate != _todayStr()) {
+        refresh();
+      }
+    });
+  }
 
   final ApiClient _api = ApiClient();
 

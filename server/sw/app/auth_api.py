@@ -19,7 +19,14 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict
 from starlette.concurrency import run_in_threadpool
 
-from app.auth_service import AuthError, get_user, log_in, sign_up, verify_token
+from app.auth_service import (
+    AuthError,
+    get_user,
+    log_in,
+    sign_up,
+    update_user,
+    verify_token,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +45,8 @@ STATUS_BY_CODE = {
     "token_expired": 401,
     "user_not_found": 404,
     "login_id_taken": 409,
+    "invalid_field": 400,
+    "no_changes": 400,
     # 서버 설정 누락은 클라이언트 잘못이 아니다.
     "missing_jwt_secret": 500,
 }
@@ -107,6 +116,15 @@ class LogInRequest(BaseModel):
     password: str
 
 
+class UpdateMeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    login_id: str | None = None
+    password: str | None = None
+    user_type: str | None = None
+
+
 # ─── 엔드포인트 ──────────────────────────────────────────────────────────────
 
 @router.post("/signup", status_code=201)
@@ -162,3 +180,28 @@ async def me(user_id: UUID = Depends(current_user_id)):
 
     except AuthError as error:
         raise http_error(error)
+
+
+@router.patch("/me")
+async def update_me(
+    body: UpdateMeRequest,
+    user_id: UUID = Depends(current_user_id),
+):
+    changes = body.model_dump(include=body.model_fields_set)
+
+    try:
+        return await run_in_threadpool(update_user, user_id, changes)
+
+    except AuthError as error:
+        raise http_error(error)
+
+    except Exception:
+        logger.exception("Unexpected profile update error")
+
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "internal_error",
+                "message": "an internal server error occurred",
+            },
+        )

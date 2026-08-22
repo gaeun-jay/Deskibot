@@ -2,6 +2,7 @@ import asyncio
 import hmac
 import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -36,12 +37,22 @@ from app.event_service import (
     start_detection_event,
 )
 from app.realtime import manager
+from app.scheduler import start_scheduler, stop_scheduler
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    start_scheduler()
+    yield
+    stop_scheduler()
+
 
 app = FastAPI(
     title="Deskibot SW API",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.include_router(auth_router)

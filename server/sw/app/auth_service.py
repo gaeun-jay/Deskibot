@@ -229,6 +229,80 @@ def log_in(login_id: str, password: str):
     }
 
 
+def update_user(user_id: UUID, changes: dict):
+    allowed = {"name", "login_id", "password", "user_type"}
+    unknown = set(changes) - allowed
+
+    if unknown:
+        raise AuthError(
+            "invalid_field",
+            f"cannot update: {', '.join(sorted(unknown))}",
+        )
+
+    if not changes:
+        raise AuthError("no_changes", "nothing to update")
+
+    set_clauses = []
+    params: dict = {}
+
+    if "name" in changes:
+        name = (changes["name"] or "").strip()
+        if not name:
+            raise AuthError("invalid_name", "name must not be empty")
+        set_clauses.append("name = %(name)s")
+        params["name"] = name
+
+    if "login_id" in changes:
+        login_id = (changes["login_id"] or "").strip()
+        if not LOGIN_ID_PATTERN.match(login_id):
+            raise AuthError(
+                "invalid_login_id",
+                "login_id must be 4-32 characters of letters, digits, . _ or -",
+            )
+        set_clauses.append("login_id = %(login_id)s")
+        params["login_id"] = login_id
+
+    if "password" in changes:
+        password = changes["password"]
+        if not isinstance(password, str) or len(password) < MIN_PASSWORD_LENGTH:
+            raise AuthError(
+                "invalid_password",
+                f"password must be at least {MIN_PASSWORD_LENGTH} characters",
+            )
+        set_clauses.append("password_hash = %(password_hash)s")
+        params["password_hash"] = _hasher.hash(password)
+
+    if "user_type" in changes:
+        user_type = changes["user_type"]
+        if user_type not in USER_TYPES:
+            raise AuthError(
+                "invalid_user_type",
+                "user_type must be student or worker",
+            )
+        set_clauses.append("user_type = %(user_type)s")
+        params["user_type"] = user_type
+
+    params["user_id"] = user_id
+
+    try:
+        with get_db_connection() as conn:
+            user = conn.execute(
+                f"""
+                UPDATE users SET {', '.join(set_clauses)}
+                WHERE id = %(user_id)s
+                RETURNING *
+                """,
+                params,
+            ).fetchone()
+    except UniqueViolation:
+        raise AuthError("login_id_taken", "that login_id is already in use")
+
+    if user is None:
+        raise AuthError("user_not_found", "the user does not exist")
+
+    return serialize_user(user)
+
+
 def get_user(user_id: UUID):
     with get_db_connection() as conn:
         user = conn.execute(

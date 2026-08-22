@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:glassmorphism/glassmorphism.dart';
@@ -5,12 +6,9 @@ import 'package:deskibot/models/daily_model.dart';
 import 'package:deskibot/services/daily_service.dart';
 import 'package:deskibot/services/todo_service.dart';
 import 'package:deskibot/services/focus_session_service.dart';
-import 'package:deskibot/models/focus_session_model.dart';
+import 'package:deskibot/services/focus_websocket_service.dart';
 import 'package:deskibot/models/todo_model.dart';
 import 'package:deskibot/theme/app_styles.dart';
-
-import 'dart:convert';
-import 'package:http/http.dart' as http;
 
 class DailyAnalysisScreen extends StatefulWidget {
   const DailyAnalysisScreen({super.key});
@@ -29,8 +27,6 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
   int _focusRate = 0;
   int _totalScore = 0;
   int _totalMin = 0;
-  List<FocusSessionModel> _sessions = [];
-  List<TodoModel> _todos = [];
   String? _advice;
   String? _journalTitle;
   String? _journalSubtitle;
@@ -38,21 +34,81 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
   int _latestDrowsyDuration = 0;
   String? _latestPhoneTime;
   int _latestPhoneDuration = 0;
-  bool _isGenerating = false;
   late String _today;
+  StreamSubscription<List<TodoModel>>? _todoSub;
+  StreamSubscription<Map<String, dynamic>>? _wsSub;
+  Timer? _dateCheckTimer;
+
+  // 공부일지 탭 전용. "분석" 탭(오늘 실시간)과 달리 전날(어제) 하루치 스냅샷이다.
+  DailyModel? _journalData;
+  List<TodoModel> _journalTodos = [];
 
   String _todayStr() {
     final now = DateTime.now();
     return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
   }
 
+  String _yesterdayStr() {
+    final now = DateTime.now().subtract(const Duration(days: 1));
+    return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+  }
+
   int get _h => _totalMin ~/ 60;
   int get _m => _totalMin % 60;
+
+  int get _journalTotalMin =>
+      (_journalData?.pomodoroDuration ?? 0) + (_journalData?.stopwatchDuration ?? 0);
+  int get _journalH => _journalTotalMin ~/ 60;
+  int get _journalM => _journalTotalMin % 60;
+  int get _journalTodoTotal => _journalTodos.length;
+  int get _journalTodoDone => _journalTodos.where((t) => t.isDone).length;
 
   @override
   void initState() {
     super.initState();
     _loadDailyData();
+    // 홈 화면 등 다른 곳에서 투두를 추가/완료 처리해도 곧바로 반영되도록 함
+    _todoSub = TodoService().getTodayTodos().listen(_onTodosUpdated);
+
+    // 로봇이 졸음/폰 사용을 감지해 끝날 때(detection_end)마다 통계를 다시 불러옴
+    FocusWebSocketService.instance.connect();
+    _wsSub = FocusWebSocketService.instance.stream.listen((msg) {
+      if (msg['type'] == 'detection_event' && msg['action'] == 'detection_end') {
+        _refreshStats();
+      }
+    });
+
+    // 이 화면은 계속 떠 있을 수 있어서(IndexedStack), 자정을 넘겨도 아무 탭
+    // 전환·이벤트 없이 계속 보고 있으면 날짜가 안 바뀔 수 있다. 1분마다
+    // 스스로 날짜가 바뀌었는지 확인해서, 바뀌었으면 전부 다시 불러온다.
+    _dateCheckTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (_todayStr() != _today) {
+        _refreshStats();
+        _refreshJournal();
+        _refreshJournalData();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _todoSub?.cancel();
+    _wsSub?.cancel();
+    _dateCheckTimer?.cancel();
+    super.dispose();
+  }
+
+  void _onTodosUpdated(List<TodoModel> todos) {
+    if (!mounted) return;
+    final total = todos.length;
+    final done = todos.where((t) => t.isDone).length;
+    final rate = total > 0 ? ((done / total) * 100).round() : 0;
+    setState(() {
+      _todoTotal = total;
+      _todoDone = done;
+      _todoRate = rate;
+      _totalScore = ((_focusRate + rate) / 2).round();
+    });
   }
 
   int _timeToMinutes(String time) {
@@ -61,17 +117,52 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
   }
 
   Future<void> _loadDailyData() async {
-    final analysis = await DailyService().getTodayAnalysis();
-    final data = await DailyService().getTodayData();
-    final todos = await TodoService().getTodayTodos().first;
+    await _refreshJournal();
+    await _refreshJournalData();
+    await _refreshStats();
+  }
+
+  /// 공부일지 탭에 보이는 어제 하루치 통계·할일을 불러온다.
+  Future<void> _refreshJournalData() async {
+    final yesterday = _yesterdayStr();
+    final data = await DailyService().getTodayData(date: yesterday);
+    final todos = await TodoService().getTodosForDate(yesterday);
     if (!mounted) return;
-    final total = todos.length;
-    final done = todos.where((t) => t.isDone).length;
-    final rate = total > 0 ? ((done / total) * 100).round() : 0;
+    setState(() {
+      _journalData = data;
+      _journalTodos = todos;
+    });
+  }
+
+  /// 오늘의 공부일지(title/subtitle/advice)를 서버에서 다시 불러온다.
+  /// DB 값이 바뀌어도(예: 재생성) 화면이 그 값을 다시 읽어오도록 탭을 열 때마다 호출한다.
+  Future<void> _refreshJournal() async {
+    var analysis = await DailyService().getTodayAnalysis();
+    if (analysis == null) {
+      try {
+        analysis = await DailyService().generateTodayAnalysis();
+      } catch (_) {
+        analysis = null;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      // 생성 실패(그날 활동 없음 등)면 이전 날짜의 값이 남아있지 않도록 비운다.
+      _journalTitle = analysis?['title'];
+      _journalSubtitle = analysis?['subtitle'];
+      _advice = analysis?['advice'];
+    });
+  }
+
+  /// 졸음/폰 감지·집중 시간 통계를 불러옴
+  Future<void> _refreshStats() async {
+    final data = await DailyService().getTodayData();
+    if (!mounted) return;
 
     // 시간대별 집중도
     _today = _todayStr();
     final sessions = await FocusSessionService().getSessionsByDate(_today);
+    if (!mounted) return;
     final Map<String, int> rates = {};
     final slots = {
       '새벽': {'start': 0, 'end': 359, 'total': 360},
@@ -95,17 +186,12 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
     }
     setState(() {
       _dailyData = data;
-      _todoRate = rate;
-      _todoTotal = total;
-      _todoDone = done;
       _timeSlotRates = rates;
-      _sessions = sessions;
-      _todos = todos;
       _totalMin = (data?.pomodoroDuration ?? 0) + (data?.stopwatchDuration ?? 0);
       final drowsy = data?.drowsyDuration ?? 0;
       final phone = data?.phoneDuration ?? 0;
       _focusRate = _totalMin > 0 ? ((_totalMin - drowsy - phone) / _totalMin * 100).round() : 0;
-      _totalScore = ((_focusRate + rate) / 2).round();
+      _totalScore = ((_focusRate + _todoRate) / 2).round();
       // 전체 세션 중 가장 최신 졸음/폰 이벤트 (start_time 기준)
       final drowsySessions = sessions
           .where((s) => s.latestDrowsyTime != null)
@@ -119,55 +205,11 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
       _latestDrowsyDuration = drowsySessions.isNotEmpty ? drowsySessions.last.latestDrowsyDuration : 0;
       _latestPhoneTime = phoneSessions.isNotEmpty ? phoneSessions.last.latestPhoneTime : null;
       _latestPhoneDuration = phoneSessions.isNotEmpty ? phoneSessions.last.latestPhoneDuration : 0;
-      if (analysis != null) {
-        _journalTitle = analysis['title'];
-        _journalSubtitle = analysis['subtitle'];
-        _advice = analysis['advice'];
-      }
     });
   }
 
-  // 오늘의 공부일지 생성 (개인 컴에서 FastAPI를 활용함)
-  Future<void> _generateReport() async {
-    setState(() => _isGenerating = true);
-    final response = await http.post(
-      Uri.parse('http://127.0.0.1:8000/daily-analysis/generate'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'date': _today,
-        'total_minutes': (_dailyData?.pomodoroDuration ?? 0) + (_dailyData?.stopwatchDuration ?? 0),
-        'drowsy_count': _dailyData?.drowsyCount ?? 0,
-        'drowsy_duration': _dailyData?.drowsyDuration ?? 0,
-        'phone_count': _dailyData?.phoneCount ?? 0,
-        'phone_duration': _dailyData?.phoneDuration ?? 0,
-        'focus_rate': _focusRate,
-        'todo_done': _todoDone,
-        'todo_total': _todoTotal,
-        'todo_rate': _todoRate,
-        'sessions': _sessions.map((s) => <String, dynamic>{
-          'type': s.type,
-          'title': '',
-          'start_time': '',
-          'end_time': s.endTime,
-          'actual_duration': s.actualDuration,
-        }).toList(),
-        'todos': _todos.map((t) => <String, dynamic>{
-          'content': t.content,
-          'is_done': t.isDone,
-        }).toList(),
-      }),
-    );
-
-    setState(() => _isGenerating = false);
-    if (response.statusCode == 200) {
-      setState(() {
-        _advice = jsonDecode(response.body)['advice'];
-      });
-    }
-  }
-
-  String _getFormattedDate() {
-    final now = DateTime.now();
+  String _getFormattedDate({int daysOffset = 0}) {
+    final now = DateTime.now().add(Duration(days: daysOffset));
     const weekdays = ['월요일', '화요일', '수요일', '목요일', '금요일', '토요일', '일요일'];
     final weekday = weekdays[now.weekday - 1];
     return '${now.year}년 ${now.month}월 ${now.day}일 $weekday';
@@ -265,7 +307,7 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
           children: [
             _buildTabItem(index: 0, label: '분석'),
             const SizedBox(width: 8),
-            _buildTabItem(index: 1, label: '오늘의 공부일지'),
+            _buildTabItem(index: 1, label: '공부일지'),
           ],
         ),
       ),
@@ -276,7 +318,14 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
     final isSelected = _selectedTab == index;
     return Expanded(
       child: GestureDetector(
-        onTap: () => setState(() => _selectedTab = index),
+        onTap: () {
+          setState(() => _selectedTab = index);
+          // 공부일지 탭을 열 때마다 DB 최신 값을 다시 불러온다.
+          if (index == 1) {
+            _refreshJournal();
+            _refreshJournalData();
+          }
+        },
         child: GlassmorphicContainer(
           width: double.infinity,
           height: double.infinity,
@@ -769,10 +818,10 @@ Widget _buildDisturbanceItem({
     );
   }
   
-  // 오늘의 공부일지 > 일지 카드
+  // 오늘의 공부일지 > 일지 카드 (전날 하루치)
   Widget _buildDailyJournalCard() {
-    final completedTodos = _todos.where((t) => t.isDone).toList();
-    final incompleteTodos = _todos.where((t) => !t.isDone).toList();
+    final completedTodos = _journalTodos.where((t) => t.isDone).toList();
+    final incompleteTodos = _journalTodos.where((t) => !t.isDone).toList();
 
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -792,7 +841,7 @@ Widget _buildDisturbanceItem({
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 자동 생성됨 · 날짜
+          // 날짜
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
@@ -800,11 +849,11 @@ Widget _buildDisturbanceItem({
               borderRadius: BorderRadius.circular(20),
             ),
             child: Text(
-              '자동 생성됨 · ${_getFormattedDate()}',
+              '${_getFormattedDate(daysOffset: -1)}에 생성된 공부일지',
               style: const TextStyle(fontSize: 12, color: Color(0xFF6286B8), fontWeight: FontWeight.w500),
             ),
           ),
-          const SizedBox(height: 15),
+          const SizedBox(height: 10),
           if (_journalTitle != null && _journalTitle!.isNotEmpty) ...[
             Text(
               _journalTitle!,
@@ -817,11 +866,13 @@ Widget _buildDisturbanceItem({
             ),
           ] else ...[
             const Text(
+              // 수정 필요
               '오늘의 공부일지가 아직 생성되지 않았어요.',
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1E1E1E), height: 1.3),
             ),
             const SizedBox(height: 6),
             const Text(
+              // 수정 필요
               '자정에 자동으로 생성됩니다.',
               style: TextStyle(fontSize: 13, color: Color(0xFF8E8E8E), fontWeight: FontWeight.w500),
             ),
@@ -832,10 +883,10 @@ Widget _buildDisturbanceItem({
             spacing: 6,
             runSpacing: 6,
             children: [
-              _buildJournalChip('집중 ${_h}h ${_m}m', const Color(0xFFDBEAFF), const Color(0xFF2881FF)),
-              _buildJournalChip('달성 $_todoDone/$_todoTotal', const Color(0xFFE4F3ED), const Color(0xFF07733B)),
-              _buildJournalChip('졸음 ${_dailyData?.drowsyCount ?? 0}회', const Color(0xFFFFF5E3), const Color(0xFFBF5A00)),
-              _buildJournalChip('스마트폰 ${_dailyData?.phoneCount ?? 0}회', const Color(0xFFFFEBEC), const Color(0xFFB71D28)),
+              _buildJournalChip('집중 ${_journalH}h ${_journalM}m', const Color(0xFFDBEAFF), const Color(0xFF2881FF)),
+              _buildJournalChip('달성 $_journalTodoDone/$_journalTodoTotal', const Color(0xFFE4F3ED), const Color(0xFF07733B)),
+              _buildJournalChip('졸음 ${_journalData?.drowsyCount ?? 0}회', const Color(0xFFFFF5E3), const Color(0xFFBF5A00)),
+              _buildJournalChip('스마트폰 ${_journalData?.phoneCount ?? 0}회', const Color(0xFFFFEBEC), const Color(0xFFB71D28)),
             ],
           ),
           const SizedBox(height: 15),
@@ -871,7 +922,9 @@ Widget _buildDisturbanceItem({
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
-                  _advice ?? '',
+                  (_advice != null && _advice!.isNotEmpty)
+                      ? _advice!
+                      : '아직 생성되지 않았어요.',
                   textAlign: TextAlign.justify,
                   style: const TextStyle(fontSize: 14, color: Color(0xFF1E1E1E), height: 1.6),
                 ),
@@ -924,8 +977,8 @@ Widget _buildDisturbanceItem({
   // 오늘의 공부일지 > 상단 안내 배너
   Widget _buildInfoBanner() {
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: const Color(0xFFF7F9FD),
         borderRadius: BorderRadius.circular(15),
@@ -939,14 +992,14 @@ Widget _buildDisturbanceItem({
           const Expanded(
             child: Text.rich(
               TextSpan(
-                text: '오늘 일지는 ',
+                text: '공부일지는 ',
                 style: TextStyle(fontSize: 14, color: Color(0xFF1E1E1E)),
                 children: [
                   TextSpan(
                     text: '자정에 자동 생성',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
-                  TextSpan(text: '돼요. 하루 집중 데이터, 완료/미완료 할일, AI 한 줄 요약이 함께 기록됩니다.'),
+                  TextSpan(text: '돼요. 하루 집중 데이터, 완료/미완료 할일, AI가 생성한 조언이 함께 기록됩니다.'),
                 ],
               ),
             ),

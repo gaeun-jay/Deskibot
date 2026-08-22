@@ -90,4 +90,38 @@ class AuthService {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString('name');
   }
+
+  Future<String?> getCurrentLoginId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('login_id');
+  }
+
+  Future<String?> getCurrentUserType() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('user_type');
+  }
+
+  /// 프로필 수정. 비밀번호는 바꿀 때만 넘긴다 (null 이면 그대로 둔다).
+  Future<void> updateProfile({
+    String? name,
+    String? loginId,
+    String? password,
+    String? userType,
+  }) async {
+    final res = await _api.patch(
+      '/api/auth/me',
+      body: {
+        if (name != null) 'name': name,
+        if (loginId != null) 'login_id': loginId,
+        if (password != null) 'password': password,
+        if (userType != null) 'user_type': userType,
+      },
+    );
+
+    final user = Map<String, dynamic>.from(res as Map);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('login_id', user['login_id'] as String);
+    await prefs.setString('name', user['name'] as String);
+    await prefs.setString('user_type', user['user_type'] as String);
+  }
 }

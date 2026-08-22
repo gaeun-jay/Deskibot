@@ -32,12 +32,24 @@ class ApiException implements Exception {
         return '비밀번호는 8자 이상이어야 해요';
       case 'invalid_content':
         return '내용을 입력해주세요';
+      case 'invalid_name':
+        return '이름을 입력해주세요';
+      case 'invalid_user_type':
+        return '유형을 선택해주세요';
       case 'invalid_notify':
         return '알림을 켜려면 마감 시각을 함께 정해주세요';
       case 'no_category':
         return '카테고리를 먼저 만들어주세요';
       case 'category_not_found':
         return '없는 카테고리예요';
+      case 'invalid_color':
+        return '색상 형식이 올바르지 않아요';
+      case 'name_taken':
+        return '이미 있는 이름이에요';
+      case 'category_limit':
+        return '카테고리는 최대 5개까지 만들 수 있어요';
+      case 'category_in_use':
+        return '할 일이 남아있는 카테고리는 삭제할 수 없어요';
       case 'todo_not_found':
         return '이미 삭제된 할 일이에요';
       case 'missing_token':
@@ -103,8 +115,13 @@ class ApiClient {
   Future<dynamic> get(String path, {Map<String, String>? query}) =>
       _send('GET', path, query: query);
 
-  Future<dynamic> post(String path, {Object? body, bool auth = true}) =>
-      _send('POST', path, body: body, auth: auth);
+  Future<dynamic> post(
+    String path, {
+    Object? body,
+    Map<String, String>? query,
+    bool auth = true,
+  }) =>
+      _send('POST', path, body: body, query: query, auth: auth);
 
   Future<dynamic> patch(String path, {Object? body}) =>
       _send('PATCH', path, body: body);

@@ -4,9 +4,9 @@
 원래 개발 PC 에서 돌리던 FastAPI(/daily-analysis/generate)가 하던 일인데,
 그 코드가 유실돼 새로 만든다.
 
-스키마 제약: analysis_daily 에는 advice 컬럼 하나뿐이다. 앱은 title/subtitle
-도 읽지만 저장할 자리가 없어서 null 로 내려보낸다. 앱 화면에 title 이 없을
-때의 대체 분기가 이미 있어서 표시는 정상적으로 된다.
+title/subtitle/advice 세 필드를 한 번의 Claude 호출로 같이 생성해
+analysis_daily 에 저장한다. 마이그레이션 전에 생성된 기존 행은
+title/subtitle 이 NULL 일 수 있다 — 앱은 그 경우 대체 화면을 그린다.
 """
 
 import json
@@ -32,14 +32,38 @@ DEFAULT_MODEL = "claude-opus-5"
 ADVICE_SCHEMA = {
     "type": "object",
     "properties": {
+        "title": {
+            "type": "string",
+            "description": (
+                "오늘의 집중/방해 패턴을 감성적으로 요약한 한 문장. "
+                '예: "오전엔 잘 됐는데 오후가 아쉬웠던 하루."'
+            ),
+        },
+        "subtitle": {
+            "type": "string",
+            "description": (
+                "title을 보완하는 핵심 패턴 한 줄 요약. "
+                '예: "오전 루틴은 지켜졌지만, 점심 후 전환이 아직 어려워요."'
+            ),
+        },
         "advice": {
             "type": "string",
-            "description": "오늘 하루에 대한 코칭 한두 문장",
+            "description": (
+                "시간대별 집중 패턴과 방해 요소, 투두 데이터를 바탕으로 한 "
+                "내일을 위한 조언. 최대한 간략하게 1~2문장. "
+                '예: "내일은 오후 시간대에 수면 부족을 보충하고, 정해진 '
+                '투두 완료 시간을 명확히 설정하여 집중력을 높여보세요."'
+            ),
         },
     },
-    "required": ["advice"],
+    "required": ["title", "subtitle", "advice"],
     "additionalProperties": False,
 }
+
+# 그날 활동이 전혀 없을 때 쓰는 고정 문구. Claude 를 부르지 않는다.
+NO_ACTIVITY_TITLE = "기록이 없는 하루였어요"
+NO_ACTIVITY_SUBTITLE = "어제는 앱도 로봇도 사용하지 않은 것 같아요"
+NO_ACTIVITY_ADVICE = "오늘은 짧게라도 집중 세션 하나만 시작해보는 건 어떨까요?"
 
 SLOT_NAMES = {
     "dawn": "새벽",
@@ -77,12 +101,14 @@ def _build_prompt(on_date: date_type, totals, slots, sessions, user_type):
         kind = "뽀모도로" if s["type"] == "pomodoro" else "스톱워치"
         session_lines.append(
             f"  - {kind} {_minutes(s['actual_duration_sec'])}분"
-            f" ({s['status']})"
+            f" ({s['end_reason']})"
         )
 
     user_line = f"사용자 유형: {user_type}\n" if user_type else ""
 
-    return f"""당신은 학습 습관 코치입니다. 아래는 사용자의 {on_date.isoformat()} 하루 집중 공부 데이터입니다.
+    return f"""당신은 오늘 날짜에 해당하는 사용자의 집중 세션, 하루 통계, 투두 데이터를 모두 분석하여 사용자에게 따뜻하고 공감되는 하루 레포트를 작성하는 AI입니다.
+
+아래는 사용자의 {on_date.isoformat()} 하루 학습 데이터입니다.
 {user_line}
 총 집중: {focus_min}분 (뽀모도로 {_minutes(totals['pomodoro_duration_sec'])}분 / 스톱워치 {_minutes(totals['stopwatch_duration_sec'])}분)
 세션 수: 뽀모도로 {totals['pomodoro_count']}회, 스톱워치 {totals['stopwatch_count']}회
@@ -92,14 +118,22 @@ def _build_prompt(on_date: date_type, totals, slots, sessions, user_type):
 시간대 | {' | '.join(slot_lines)}
 {chr(10).join(session_lines) if session_lines else ''}
 
-위 하루 데이터를 보고 사용자에게 건넬 조언을 작성하세요.
+위 데이터를 분석해서 title, subtitle, advice 를 작성하세요.
 
-규칙:
-- 두 문장 이내, 100자 이내
+작성 기준:
+- title: 오늘의 집중/방해 패턴을 감성적으로 요약한 한 문장
+  (예: "오전엔 잘 됐는데 오후가 아쉬웠던 하루.")
+- subtitle: title을 보완하는 핵심 패턴 한 줄 요약
+  (예: "오전 루틴은 지켜졌지만, 점심 후 전환이 아직 어려워요.")
+- advice: 시간대별 집중 패턴과 방해 요소, 투두 데이터를 바탕으로 한 내일을 위한 조언.
+  최대한 간략하게 1~2문장
+  (예: "내일은 오후 시간대에 수면 부족을 보충하고, 정해진 투두 완료 시간을 명확히 설정하여 집중력을 높여보세요.")
+
+공통 규칙:
+- 모두 한국어로, 따뜻하고 공감되는 어조로 작성할 것
 - 구체적인 수치를 하나 이상 언급할 것
-- "-다", "-네요", "-해보는 건 어떨까요" 같은 서술형·제안형 말투
 - 단정적인 훈계나 비난은 피하고, 관찰한 사실에서 출발할 것
-- 한국어로 작성"""
+- 세 필드 모두 서로 다른 표현을 쓸 것 (같은 문장 반복 금지)"""
 
 
 def _fetch_day(conn, user_id: UUID, on_date: date_type):
@@ -107,8 +141,8 @@ def _fetch_day(conn, user_id: UUID, on_date: date_type):
 
     sessions = conn.execute(
         """
-        SELECT type, status, actual_duration_sec
-        FROM focus_sessions
+        SELECT type, end_reason, actual_duration_sec
+        FROM focus_session_outcomes
         WHERE user_id = %s AND session_date = %s AND status <> 'in_progress'
         ORDER BY started_at
         """,
@@ -132,11 +166,9 @@ def serialize_daily(row):
 
     return {
         "date": row["date"].isoformat(),
+        "title": row["title"],
+        "subtitle": row["subtitle"],
         "advice": row["advice"],
-        # analysis_daily 에 저장할 컬럼이 없다. 앱은 값이 없으면
-        # 대체 화면을 그리도록 이미 만들어져 있다.
-        "title": None,
-        "subtitle": None,
         "generated_at": row["generated_at"].isoformat(),
     }
 
@@ -148,7 +180,7 @@ def get_daily_analysis(user_id: str, on_date: date_type | None = None):
     with get_db_connection() as conn:
         row = conn.execute(
             """
-            SELECT date, advice, generated_at
+            SELECT date, title, subtitle, advice, generated_at
             FROM analysis_daily
             WHERE user_id = %s AND date = %s
             """,
@@ -165,43 +197,46 @@ def generate_daily_analysis(user_id: str, on_date: date_type | None = None):
     with get_db_connection() as conn:
         totals, slots, sessions, user_type = _fetch_day(conn, parsed, on_date)
 
-        has_activity = any(
-            totals[k]
-            for k in (
-                "pomodoro_count",
-                "stopwatch_count",
-                "drowsy_count",
-                "phone_count",
-                "todo_total",
-            )
+    has_activity = any(
+        totals[k]
+        for k in (
+            "pomodoro_count",
+            "stopwatch_count",
+            "drowsy_count",
+            "phone_count",
+            "todo_total",
         )
+    )
 
-        if not has_activity:
-            raise AnalysisError(
-                "no_data",
-                "there is no activity on this date",
-            )
-
-    prompt = _build_prompt(on_date, totals, slots, sessions, user_type)
-    advice = _call_claude(prompt)
+    if has_activity:
+        prompt = _build_prompt(on_date, totals, slots, sessions, user_type)
+        title, subtitle, advice = _call_claude(prompt)
+    else:
+        # 그날 활동이 전혀 없으면 Claude 를 호출하지 않고 고정 문구를 쓴다.
+        # (비용 절감 + "리포트 없음"보다 자연스러운 빈 하루 안내)
+        title = NO_ACTIVITY_TITLE
+        subtitle = NO_ACTIVITY_SUBTITLE
+        advice = NO_ACTIVITY_ADVICE
 
     with get_db_connection() as conn:
         row = conn.execute(
             """
-            INSERT INTO analysis_daily (user_id, date, advice, generated_at)
-            VALUES (%s, %s, %s, NOW())
+            INSERT INTO analysis_daily (user_id, date, title, subtitle, advice, generated_at)
+            VALUES (%s, %s, %s, %s, %s, NOW())
             ON CONFLICT (user_id, date) DO UPDATE SET
+                title = EXCLUDED.title,
+                subtitle = EXCLUDED.subtitle,
                 advice = EXCLUDED.advice,
                 generated_at = EXCLUDED.generated_at
-            RETURNING date, advice, generated_at
+            RETURNING date, title, subtitle, advice, generated_at
             """,
-            (parsed, on_date, advice),
+            (parsed, on_date, title, subtitle, advice),
         ).fetchone()
 
     return serialize_daily(row)
 
 
-def _call_claude(prompt: str) -> str:
+def _call_claude(prompt: str) -> tuple[str, str, str]:
     client = _anthropic_client()
 
     try:
@@ -237,18 +272,25 @@ def _call_claude(prompt: str) -> str:
         )
 
     try:
-        advice = (json.loads(text).get("advice") or "").strip()
+        parsed = json.loads(text)
+        title = (parsed.get("title") or "").strip()
+        subtitle = (parsed.get("subtitle") or "").strip()
+        advice = (parsed.get("advice") or "").strip()
     except ValueError:
         raise AnalysisError(
             "invalid_model_response",
             "the model response was not valid JSON",
         )
 
-    # analysis_daily.advice 에 CHECK (btrim(advice) <> '') 가 걸려 있다.
+    # analysis_daily 의 title/subtitle/advice 모두 NOT NULL + 빈 문자열 금지 CHECK 가 걸려 있다.
+    if not title:
+        raise AnalysisError("empty_title", "the model returned empty title")
+    if not subtitle:
+        raise AnalysisError("empty_subtitle", "the model returned empty subtitle")
     if not advice:
         raise AnalysisError("empty_advice", "the model returned empty advice")
 
-    return advice
+    return title, subtitle, advice
 
 
 def _parse_user_id(user_id) -> UUID:

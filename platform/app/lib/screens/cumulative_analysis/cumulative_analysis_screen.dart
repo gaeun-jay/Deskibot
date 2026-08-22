@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' show sqrt;
 import 'package:flutter/material.dart';
 import 'package:glassmorphism/glassmorphism.dart';
@@ -20,10 +21,32 @@ class _CumulativeAnalysisScreenState extends State<CumulativeAnalysisScreen> {
   CumulativeAnalysisModel? _analysis;
   final List<String> _periods = ['1주', '1달', '3달', '6달', '1년'];
 
+  String? _loadedDate;
+  Timer? _dateCheckTimer;
+
+  String _todayStr() {
+    final now = DateTime.now();
+    return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+  }
+
   @override
   void initState() {
     super.initState();
     _loadStats();
+
+    // 이 화면도 IndexedStack 으로 계속 떠 있을 수 있어서, 탭 전환 없이
+    // 자정을 넘기면 날짜가 안 바뀔 수 있다. 1분마다 스스로 확인한다.
+    _dateCheckTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (_loadedDate != null && _loadedDate != _todayStr()) {
+        _loadStats();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _dateCheckTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadStats() async {
@@ -38,6 +61,7 @@ class _CumulativeAnalysisScreenState extends State<CumulativeAnalysisScreen> {
         setState(() {
           _stats    = results[0] as CumulativeStatsModel?;
           _analysis = results[1] as CumulativeAnalysisModel?;
+          _loadedDate = _todayStr();
         });
       }
     } finally {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:deskibot/models/focus_session_model.dart';
 import 'package:deskibot/models/todo_model.dart';
@@ -28,25 +30,37 @@ class _HomeScreenState extends State<HomeScreen> {
   DateTime _selectedDate = DateTime.now();
   TimeOfDay? _selectedDeadlineTime;
   String _notifyOption = '없음';
+  StreamSubscription<List<Category>>? _categoriesSub;
 
   @override
   void initState() {
     super.initState();
     _todosStream = TodoService().getTodayTodos();
     _focusSessionsStream = FocusSessionService().getTodaySessions();
-    _loadData();
+    // 설정 화면에서 카테고리를 추가/수정/삭제(색상 변경 포함)해도 곧바로
+    // 반영되도록, 싱글톤 UserService 의 브로드캐스트 스트림을 계속 구독한다.
+    _categoriesSub = UserService().watchCategories().listen((categories) {
+      if (mounted) setState(() => _categories = categories);
+    });
   }
 
   @override
   void dispose() {
     _contentController.dispose();
+    _categoriesSub?.cancel();
     super.dispose();
   }
 
-  Future<void> _loadData() async {
-    final categories = await UserService().getCategories();
-    if (!mounted) return;
-    setState(() => _categories = categories);
+  Color _categoryColor(String hex) {
+    return Color(int.parse('FF${hex.replaceFirst('#', '')}', radix: 16));
+  }
+
+  /// 배경색 밝기에 따라 잘 보이는 글자색(흰색/검정)을 고른다.
+  /// 연한 파스텔 카테고리 색 위에 흰 글씨가 묻히는 걸 막기 위함.
+  Color _onColor(Color background) {
+    return background.computeLuminance() > 0.5
+        ? const Color(0xFF1E1E1E)
+        : Colors.white;
   }
 
   String _formatTodayHeader() {
@@ -91,6 +105,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (picked != null) setState(() => _selectedDate = picked);
   }
+
+  void _openForm() => setState(() => _showForm = true);
 
   void _closeForm() {
     _contentController.clear();
@@ -347,8 +363,7 @@ class _HomeScreenState extends State<HomeScreen> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: () =>
-                    _showForm ? _closeForm() : setState(() => _showForm = true),
+                onPressed: () => _showForm ? _closeForm() : _openForm(),
                 icon: Icon(
                   _showForm ? Icons.close : Icons.add,
                   color: Colors.white,
@@ -426,6 +441,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Row(
               children: _categories.map((cat) {
                 final selected = _selectedCategoryId == cat.id;
+                final color = _categoryColor(cat.color);
                 return Padding(
                   padding: const EdgeInsets.only(right: 8),
                   child: GestureDetector(
@@ -435,15 +451,16 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                       decoration: BoxDecoration(
-                        color: selected
-                            ? const Color(0xFF0069FF)
-                            : const Color(0xFFF0F0F0),
+                        color: selected ? color : Colors.white,
                         borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: selected ? color : const Color(0xFFDDDDDD),
+                        ),
                       ),
                       child: Text(
                         cat.name,
                         style: TextStyle(
-                          color: selected ? Colors.white : Colors.black54,
+                          color: selected ? _onColor(color) : const Color(0xFF9AA0A6),
                           fontSize: 13,
                           fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
                         ),
@@ -696,18 +713,20 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
             if (category != null) ...[
               const SizedBox(width: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEEF4FF),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  category.name,
-                  style: const TextStyle(
-                      fontSize: 11, color: Color(0xFF0069FF)),
-                ),
-              ),
+              Builder(builder: (_) {
+                final color = _categoryColor(category.color);
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    category.name,
+                    style: TextStyle(fontSize: 11, color: color),
+                  ),
+                );
+              }),
             ],
           ],
         ),
