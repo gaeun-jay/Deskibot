@@ -1,0 +1,91 @@
+id,wav,ref_text,ref_tool,ref_slots,category,noise,distance,speaker
+u01-c1,audio/u01-c1.wav,오늘 할 일 알려줘,get_schedule,[{}],조회,조용,30cm,spk1
+u01-c2,audio/u01-c2.wav,오늘 할 일 알려줘,get_schedule,[{}],조회,생활소음,30cm,spk1
+u01-c3,audio/u01-c3.wav,오늘 할 일 알려줘,get_schedule,[{}],조회,조용,100cm,spk1
+u02-c1,audio/u02-c1.wav,데스키봇 오늘 뭐 해야 해,get_schedule,[{}],조회+호출어,조용,30cm,spk1
+u02-c2,audio/u02-c2.wav,데스키봇 오늘 뭐 해야 해,get_schedule,[{}],조회+호출어,생활소음,30cm,spk1
+u02-c3,audio/u02-c3.wav,데스키봇 오늘 뭐 해야 해,get_schedule,[{}],조회+호출어,조용,100cm,spk1
+u03-c1,audio/u03-c1.wav,남은 일정 뭐 있어,get_schedule,[{}],조회,조용,30cm,spk1
+u03-c2,audio/u03-c2.wav,남은 일정 뭐 있어,get_schedule,[{}],조회,생활소음,30cm,spk1
+u03-c3,audio/u03-c3.wav,남은 일정 뭐 있어,get_schedule,[{}],조회,조용,100cm,spk1
+u04-c1,audio/u04-c1.wav,이번 주 마감 있는 거 알려줘,get_schedule,[{}],조회+도메인어휘,조용,30cm,spk1
+u04-c2,audio/u04-c2.wav,이번 주 마감 있는 거 알려줘,get_schedule,[{}],조회+도메인어휘,생활소음,30cm,spk1
+u04-c3,audio/u04-c3.wav,이번 주 마감 있는 거 알려줘,get_schedule,[{}],조회+도메인어휘,조용,100cm,spk1
+u05-c1,audio/u05-c1.wav,영어 숙제 추가해줘,add_todo,"[{""content"": ""영어 숙제""}]",추가,조용,30cm,spk1
+u05-c2,audio/u05-c2.wav,영어 숙제 추가해줘,add_todo,"[{""content"": ""영어 숙제""}]",추가,생활소음,30cm,spk1
+u05-c3,audio/u05-c3.wav,영어 숙제 추가해줘,add_todo,"[{""content"": ""영어 숙제""}]",추가,조용,100cm,spk1
+u06-c1,audio/u06-c1.wav,나 오늘 알고리즘 과제 있어,add_todo,"[{""content"": ""알고리즘 과제""}]",추가-간접,조용,30cm,spk1
+u06-c2,audio/u06-c2.wav,나 오늘 알고리즘 과제 있어,add_todo,"[{""content"": ""알고리즘 과제""}]",추가-간접,생활소음,30cm,spk1
+u06-c3,audio/u06-c3.wav,나 오늘 알고리즘 과제 있어,add_todo,"[{""content"": ""알고리즘 과제""}]",추가-간접,조용,100cm,spk1
+u07-c1,audio/u07-c1.wav,내일까지 캡스톤 보고서 써야 해,add_todo,"[{""content"": ""캡스톤 보고서""}]",추가-날짜,조용,30cm,spk1
+u07-c2,audio/u07-c2.wav,내일까지 캡스톤 보고서 써야 해,add_todo,"[{""content"": ""캡스톤 보고서""}]",추가-날짜,생활소음,30cm,spk1
+u07-c3,audio/u07-c3.wav,내일까지 캡스톤 보고서 써야 해,add_todo,"[{""content"": ""캡스톤 보고서""}]",추가-날짜,조용,100cm,spk1
+u08-c1,audio/u08-c1.wav,오후 세 시까지 회로 실습 준비 추가,add_todo,"[{""content"": ""회로 실습 준비""}]",추가-시각,조용,30cm,spk1
+u08-c2,audio/u08-c2.wav,오후 세 시까지 회로 실습 준비 추가,add_todo,"[{""content"": ""회로 실습 준비""}]",추가-시각,생활소음,30cm,spk1
+u08-c3,audio/u08-c3.wav,오후 세 시까지 회로 실습 준비 추가,add_todo,"[{""content"": ""회로 실습 준비""}]",추가-시각,조용,100cm,spk1
+u09-c1,audio/u09-c1.wav,데스키봇 저녁에 헬스 가기 기억해줘,add_todo,"[{""content"": ""헬스 가기""}]",추가+호출어,조용,30cm,spk1
+u09-c2,audio/u09-c2.wav,데스키봇 저녁에 헬스 가기 기억해줘,add_todo,"[{""content"": ""헬스 가기""}]",추가+호출어,생활소음,30cm,spk1
+u09-c3,audio/u09-c3.wav,데스키봇 저녁에 헬스 가기 기억해줘,add_todo,"[{""content"": ""헬스 가기""}]",추가+호출어,조용,100cm,spk1
+u10-c1,audio/u10-c1.wav,삼십 분 전에 알려줘 아홉 시 스터디 발표,add_todo,"[{""content"": ""스터디 발표""}]",추가-알림,조용,30cm,spk1
+u10-c2,audio/u10-c2.wav,삼십 분 전에 알려줘 아홉 시 스터디 발표,add_todo,"[{""content"": ""스터디 발표""}]",추가-알림,생활소음,30cm,spk1
+u10-c3,audio/u10-c3.wav,삼십 분 전에 알려줘 아홉 시 스터디 발표,add_todo,"[{""content"": ""스터디 발표""}]",추가-알림,조용,100cm,spk1
+u11-c1,audio/u11-c1.wav,다음 주 월요일 치과 예약 잡아줘,add_todo,"[{""content"": ""치과 예약""}]",추가-상대날짜,조용,30cm,spk1
+u11-c2,audio/u11-c2.wav,다음 주 월요일 치과 예약 잡아줘,add_todo,"[{""content"": ""치과 예약""}]",추가-상대날짜,생활소음,30cm,spk1
+u11-c3,audio/u11-c3.wav,다음 주 월요일 치과 예약 잡아줘,add_todo,"[{""content"": ""치과 예약""}]",추가-상대날짜,조용,100cm,spk1
+u12-c1,audio/u12-c1.wav,영어 숙제 다 했어,complete_todo,"[{""content_hint"": ""영어 숙제""}]",완료,조용,30cm,spk1
+u12-c2,audio/u12-c2.wav,영어 숙제 다 했어,complete_todo,"[{""content_hint"": ""영어 숙제""}]",완료,생활소음,30cm,spk1
+u12-c3,audio/u12-c3.wav,영어 숙제 다 했어,complete_todo,"[{""content_hint"": ""영어 숙제""}]",완료,조용,100cm,spk1
+u13-c1,audio/u13-c1.wav,알고리즘 과제 끝냈어,complete_todo,"[{""content_hint"": ""알고리즘 과제""}]",완료,조용,30cm,spk1
+u13-c2,audio/u13-c2.wav,알고리즘 과제 끝냈어,complete_todo,"[{""content_hint"": ""알고리즘 과제""}]",완료,생활소음,30cm,spk1
+u13-c3,audio/u13-c3.wav,알고리즘 과제 끝냈어,complete_todo,"[{""content_hint"": ""알고리즘 과제""}]",완료,조용,100cm,spk1
+u14-c1,audio/u14-c1.wav,데스키봇 헬스 완료 처리해줘,complete_todo,"[{""content_hint"": ""헬스""}]",완료+호출어,조용,30cm,spk1
+u14-c2,audio/u14-c2.wav,데스키봇 헬스 완료 처리해줘,complete_todo,"[{""content_hint"": ""헬스""}]",완료+호출어,생활소음,30cm,spk1
+u14-c3,audio/u14-c3.wav,데스키봇 헬스 완료 처리해줘,complete_todo,"[{""content_hint"": ""헬스""}]",완료+호출어,조용,100cm,spk1
+u15-c1,audio/u15-c1.wav,캡스톤 보고서 체크해줘,complete_todo,"[{""content_hint"": ""캡스톤 보고서""}]",완료,조용,30cm,spk1
+u15-c2,audio/u15-c2.wav,캡스톤 보고서 체크해줘,complete_todo,"[{""content_hint"": ""캡스톤 보고서""}]",완료,생활소음,30cm,spk1
+u15-c3,audio/u15-c3.wav,캡스톤 보고서 체크해줘,complete_todo,"[{""content_hint"": ""캡스톤 보고서""}]",완료,조용,100cm,spk1
+u16-c1,audio/u16-c1.wav,치과 예약 삭제해줘,delete_todo,"[{""content_hint"": ""치과 예약""}]",삭제,조용,30cm,spk1
+u16-c2,audio/u16-c2.wav,치과 예약 삭제해줘,delete_todo,"[{""content_hint"": ""치과 예약""}]",삭제,생활소음,30cm,spk1
+u16-c3,audio/u16-c3.wav,치과 예약 삭제해줘,delete_todo,"[{""content_hint"": ""치과 예약""}]",삭제,조용,100cm,spk1
+u17-c1,audio/u17-c1.wav,스터디 발표 지워줘,delete_todo,"[{""content_hint"": ""스터디 발표""}]",삭제,조용,30cm,spk1
+u17-c2,audio/u17-c2.wav,스터디 발표 지워줘,delete_todo,"[{""content_hint"": ""스터디 발표""}]",삭제,생활소음,30cm,spk1
+u17-c3,audio/u17-c3.wav,스터디 발표 지워줘,delete_todo,"[{""content_hint"": ""스터디 발표""}]",삭제,조용,100cm,spk1
+u18-c1,audio/u18-c1.wav,데스키봇 회로 실습 준비 취소해줘,delete_todo,"[{""content_hint"": ""회로 실습 준비""}]",삭제+호출어,조용,30cm,spk1
+u18-c2,audio/u18-c2.wav,데스키봇 회로 실습 준비 취소해줘,delete_todo,"[{""content_hint"": ""회로 실습 준비""}]",삭제+호출어,생활소음,30cm,spk1
+u18-c3,audio/u18-c3.wav,데스키봇 회로 실습 준비 취소해줘,delete_todo,"[{""content_hint"": ""회로 실습 준비""}]",삭제+호출어,조용,100cm,spk1
+u19-c1,audio/u19-c1.wav,뽀모도로 시작해줘,none,[{}],OOD-기기명령,조용,30cm,spk1
+u19-c2,audio/u19-c2.wav,뽀모도로 시작해줘,none,[{}],OOD-기기명령,생활소음,30cm,spk1
+u19-c3,audio/u19-c3.wav,뽀모도로 시작해줘,none,[{}],OOD-기기명령,조용,100cm,spk1
+u20-c1,audio/u20-c1.wav,집중 타이머 이십오 분으로 맞춰줘,none,[{}],OOD-기기명령,조용,30cm,spk1
+u20-c2,audio/u20-c2.wav,집중 타이머 이십오 분으로 맞춰줘,none,[{}],OOD-기기명령,생활소음,30cm,spk1
+u20-c3,audio/u20-c3.wav,집중 타이머 이십오 분으로 맞춰줘,none,[{}],OOD-기기명령,조용,100cm,spk1
+u21-c1,audio/u21-c1.wav,영어 숙제랑 수학 과제 추가해줘,"add_todo,add_todo","[{""content"": ""영어 숙제""}, {""content"": ""수학 과제""}]",복수-추가,조용,30cm,spk1
+u21-c2,audio/u21-c2.wav,영어 숙제랑 수학 과제 추가해줘,"add_todo,add_todo","[{""content"": ""영어 숙제""}, {""content"": ""수학 과제""}]",복수-추가,생활소음,30cm,spk1
+u21-c3,audio/u21-c3.wav,영어 숙제랑 수학 과제 추가해줘,"add_todo,add_todo","[{""content"": ""영어 숙제""}, {""content"": ""수학 과제""}]",복수-추가,조용,100cm,spk1
+u22-c1,audio/u22-c1.wav,내일 발표 준비하고 모레 회의 자료 만들기 추가해줘,"add_todo,add_todo","[{""content"": ""발표 준비""}, {""content"": ""회의 자료""}]",복수-추가-날짜,조용,30cm,spk1
+u22-c2,audio/u22-c2.wav,내일 발표 준비하고 모레 회의 자료 만들기 추가해줘,"add_todo,add_todo","[{""content"": ""발표 준비""}, {""content"": ""회의 자료""}]",복수-추가-날짜,생활소음,30cm,spk1
+u22-c3,audio/u22-c3.wav,내일 발표 준비하고 모레 회의 자료 만들기 추가해줘,"add_todo,add_todo","[{""content"": ""발표 준비""}, {""content"": ""회의 자료""}]",복수-추가-날짜,조용,100cm,spk1
+u23-c1,audio/u23-c1.wav,데스키봇 치과 예약이랑 스터디 발표 삭제해줘,"delete_todo,delete_todo","[{""content_hint"": ""치과 예약""}, {""content_hint"": ""스터디 발표""}]",복수-삭제,조용,30cm,spk1
+u23-c2,audio/u23-c2.wav,데스키봇 치과 예약이랑 스터디 발표 삭제해줘,"delete_todo,delete_todo","[{""content_hint"": ""치과 예약""}, {""content_hint"": ""스터디 발표""}]",복수-삭제,생활소음,30cm,spk1
+u23-c3,audio/u23-c3.wav,데스키봇 치과 예약이랑 스터디 발표 삭제해줘,"delete_todo,delete_todo","[{""content_hint"": ""치과 예약""}, {""content_hint"": ""스터디 발표""}]",복수-삭제,조용,100cm,spk1
+u24-c1,audio/u24-c1.wav,영어 숙제랑 헬스 지워줘,"delete_todo,delete_todo","[{""content_hint"": ""영어 숙제""}, {""content_hint"": ""헬스""}]",복수-삭제,조용,30cm,spk1
+u24-c2,audio/u24-c2.wav,영어 숙제랑 헬스 지워줘,"delete_todo,delete_todo","[{""content_hint"": ""영어 숙제""}, {""content_hint"": ""헬스""}]",복수-삭제,생활소음,30cm,spk1
+u24-c3,audio/u24-c3.wav,영어 숙제랑 헬스 지워줘,"delete_todo,delete_todo","[{""content_hint"": ""영어 숙제""}, {""content_hint"": ""헬스""}]",복수-삭제,조용,100cm,spk1
+u25-c1,audio/u25-c1.wav,영어 숙제랑 알고리즘 과제 다 했어,"complete_todo,complete_todo","[{""content_hint"": ""영어 숙제""}, {""content_hint"": ""알고리즘 과제""}]",복수-완료,조용,30cm,spk1
+u25-c2,audio/u25-c2.wav,영어 숙제랑 알고리즘 과제 다 했어,"complete_todo,complete_todo","[{""content_hint"": ""영어 숙제""}, {""content_hint"": ""알고리즘 과제""}]",복수-완료,생활소음,30cm,spk1
+u25-c3,audio/u25-c3.wav,영어 숙제랑 알고리즘 과제 다 했어,"complete_todo,complete_todo","[{""content_hint"": ""영어 숙제""}, {""content_hint"": ""알고리즘 과제""}]",복수-완료,조용,100cm,spk1
+u26-c1,audio/u26-c1.wav,캡스톤 보고서랑 회로 실습 준비 끝냈어,"complete_todo,complete_todo","[{""content_hint"": ""캡스톤 보고서""}, {""content_hint"": ""회로 실습 준비""}]",복수-완료,조용,30cm,spk1
+u26-c2,audio/u26-c2.wav,캡스톤 보고서랑 회로 실습 준비 끝냈어,"complete_todo,complete_todo","[{""content_hint"": ""캡스톤 보고서""}, {""content_hint"": ""회로 실습 준비""}]",복수-완료,생활소음,30cm,spk1
+u26-c3,audio/u26-c3.wav,캡스톤 보고서랑 회로 실습 준비 끝냈어,"complete_todo,complete_todo","[{""content_hint"": ""캡스톤 보고서""}, {""content_hint"": ""회로 실습 준비""}]",복수-완료,조용,100cm,spk1
+u27-c1,audio/u27-c1.wav,오늘 할 일 알려주고 저녁에 운동하기 추가해줘,"get_schedule,add_todo","[{}, {""content"": ""운동하기""}]",복합-조회+추가,조용,30cm,spk1
+u27-c2,audio/u27-c2.wav,오늘 할 일 알려주고 저녁에 운동하기 추가해줘,"get_schedule,add_todo","[{}, {""content"": ""운동하기""}]",복합-조회+추가,생활소음,30cm,spk1
+u27-c3,audio/u27-c3.wav,오늘 할 일 알려주고 저녁에 운동하기 추가해줘,"get_schedule,add_todo","[{}, {""content"": ""운동하기""}]",복합-조회+추가,조용,100cm,spk1
+u28-c1,audio/u28-c1.wav,할 일 목록 보여주고 치과 예약 삭제해줘,"get_schedule,delete_todo","[{}, {""content_hint"": ""치과 예약""}]",복합-조회+삭제,조용,30cm,spk1
+u28-c2,audio/u28-c2.wav,할 일 목록 보여주고 치과 예약 삭제해줘,"get_schedule,delete_todo","[{}, {""content_hint"": ""치과 예약""}]",복합-조회+삭제,생활소음,30cm,spk1
+u28-c3,audio/u28-c3.wav,할 일 목록 보여주고 치과 예약 삭제해줘,"get_schedule,delete_todo","[{}, {""content_hint"": ""치과 예약""}]",복합-조회+삭제,조용,100cm,spk1
+u29-c1,audio/u29-c1.wav,영어 숙제 완료하고 내일 발표 준비 추가해줘,"complete_todo,add_todo","[{""content_hint"": ""영어 숙제""}, {""content"": ""발표 준비""}]",복합-완료+추가,조용,30cm,spk1
+u29-c2,audio/u29-c2.wav,영어 숙제 완료하고 내일 발표 준비 추가해줘,"complete_todo,add_todo","[{""content_hint"": ""영어 숙제""}, {""content"": ""발표 준비""}]",복합-완료+추가,생활소음,30cm,spk1
+u29-c3,audio/u29-c3.wav,영어 숙제 완료하고 내일 발표 준비 추가해줘,"complete_todo,add_todo","[{""content_hint"": ""영어 숙제""}, {""content"": ""발표 준비""}]",복합-완료+추가,조용,100cm,spk1
+u30-c1,audio/u30-c1.wav,오늘 할 일이랑 이번 주 마감 알려줘,get_schedule,[{}],복합-조회만(오탐검증),조용,30cm,spk1
+u30-c2,audio/u30-c2.wav,오늘 할 일이랑 이번 주 마감 알려줘,get_schedule,[{}],복합-조회만(오탐검증),생활소음,30cm,spk1
+u30-c3,audio/u30-c3.wav,오늘 할 일이랑 이번 주 마감 알려줘,get_schedule,[{}],복합-조회만(오탐검증),조용,100cm,spk1

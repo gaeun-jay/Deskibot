@@ -1,0 +1,5 @@
+# mbedTLS SSL 버퍼 크기 축소
+# 기본값: in=16384 out=4096 → SSL 세션당 ~20KB 내부 힙 필요 → 단편화로 실패
+# 변경 후: in=8192 out=4096 → ~12KB, Firebase/Firestore TLS 레코드는 8KB 이내
+CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=8192
+CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096
