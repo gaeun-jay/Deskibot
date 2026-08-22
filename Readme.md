@@ -73,27 +73,51 @@ Deskibot(Attenti)은 2026 한이음 드림업 프로젝트로, 책상에 거치�
 
 ```
 Deskibot/
-├── robot/              # 로봇 안에서 도는 것
-│   ├── esp/            #   ESP32-S3 펌웨어 (PlatformIO)
-│   │   ├── src/        #     LVGL 화면, 음성, UART, AWS 연동
-│   │   ├── include/    #     오디오 코덱, 핀 정의
-│   │   └── lib/        #     XPowersLib 등 외부 라이브러리
-│   └── rpi/            #   Raspberry Pi 5
-│       ├── detection/  #     졸음(FaceMesh)·스마트폰(EfficientDet) 감지
-│       ├── tracking/   #     서보모터 팬틸트 추적
-│       ├── comm/       #     ESP32 UART, 모니터링 스트림
-│       └── tools/      #     서보 점검 스크립트
+├── robot/                        # 로봇 안에서 도는 것
+│   ├── esp/                      #   ESP32-S3 펌웨어 (PlatformIO)
+│   │   ├── src/           (15)   #     LVGL 화면, 음성, UART, AWS 연동
+│   │   ├── include/       (9)    #     오디오 코덱, 핀 정의
+│   │   ├── lib/           (38)   #     XPowersLib 등 외부 라이브러리
+│   │   ├── assets/        (13)   #     폰트 서브셋, 아이콘
+│   │   ├── backgrounds/   (9)    #     화면 배경
+│   │   ├── fonts/         (6)    #     원본 TTF (서브셋 재생성용)
+│   │   ├── ui_assets/     (13)
+│   │   ├── platformio.ini        #     ← PlatformIO 는 이 폴더를 연다
+│   │   └── sdkconfig.defaults
+│   └── rpi/                      #   Raspberry Pi 5
+│       ├── detection/     (3)    #     졸음(FaceMesh)·스마트폰(EfficientDet)
+│       ├── tracking/      (2)    #     서보모터 팬틸트 추적
+│       ├── comm/          (2)    #     ESP32 UART, 모니터링 스트림
+│       ├── tools/         (1)    #     서보 점검 스크립트
+│       ├── main.py
+│       └── requirements.txt
 │
-├── server/             # EC2에서 도는 것
-│   └── hw/             #   음성 파이프라인 (Flask, :8000, /hw/*)
-│       ├── bench/      #     STT 엔진 비교 벤치마크와 근거 데이터
-│       └── sql/        #     HW가 쓰는 뷰 정의
+├── server/                       # EC2 에서 도는 것
+│   ├── hw/                       #   음성 파이프라인 (Flask, :8000, /hw/*)
+│   │   ├── bench/         (23)   #     STT 엔진 비교 벤치마크와 근거 데이터
+│   │   ├── sql/           (1)    #     focus_session_outcomes 뷰
+│   │   ├── server.py             #     STT → Claude → TTS
+│   │   ├── todo_add.py           #     음성 명령 → 할 일 파싱
+│   │   ├── todo_matching.py      #     할 일 대상 선택
+│   │   ├── deploy_hw.sh          #     배포 (실패 시 자동 롤백)
+│   │   ├── deskibot-hw.service   #     systemd 유닛
+│   │   └── EC2_DEPLOY_HW_AUTH.md
+│   ├── sw/                       #   FastAPI API·WebSocket (:8001, /api/*, /ws/*)
+│   └── common/                   #   hw·sw 공유 모듈 (예정)
 │
-└── docs/               # 설계 문서, 인수인계, 작업 로그
+├── app/                          # 폰에서 도는 것 — Flutter
+├── database/                     # PostgreSQL 스키마·마이그레이션
+└── docs/                  (8)    # 설계 문서, 인수인계, 작업 로그
 ```
 
-SW 파트(`server/sw/`, `app/`, `database/`)는 `sw-temp` 브랜치에서 개발 중이며
-같은 구조로 합류할 예정이다.
+### 아직 비어 있는 폴더
+
+`app/`, `database/`, `server/sw/`, `server/common/` 은 자리만 잡아둔 상태다.
+앞의 셋은 `sw-temp` 브랜치에서 개발 중이며 같은 경로로 합류한다.
+`server/common/` 은 시연 이후에 채운다 — 지금 디바이스 인증이 hw 와 sw 에
+따로 있고 토큰 검증 규칙마저 서로 달라, 두 서버가 함께 쓸 모듈을 빼낼 자리다.
+
+각 폴더의 `.gitkeep` 안에 무엇이 어디서 오는지와 옮길 때 주의할 점을 적어 뒀다.
 
 ---
 
