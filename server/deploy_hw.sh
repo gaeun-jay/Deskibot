@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # EC2 HW 음성 서버 배포 (deskibot-osaka)
 #
-#   bash server/deploy_hw.sh
+#   bash server/deploy_hw.sh [라벨]
+#
+# 라벨은 백업 디렉터리 이름에 붙는 메모다 (생략하면 manual).
+#   bash server/deploy_hw.sh clova-switch
+#     → backups/20260822-152202-clova-switch
+# 앞에 배포 시각이 붙으므로 같은 라벨을 재사용해도 백업이 겹치지 않는다.
 #
 # 백업 → 전송 → 설치 → import 검증 → 재시작 → health 확인 순으로 돌고,
 # 재시작이나 health가 실패하면 백업으로 자동 롤백한다.
@@ -11,7 +16,8 @@ set -euo pipefail
 HOST=deskibot-osaka
 APP=/home/ubuntu/Deskibot/server/hw
 STAGE=/tmp/deskibot-hw-deploy
-BACKUP="backups/pre-pool-check"      # 배포 건마다 새 이름을 쓸 것
+LABEL="${1:-manual}"                  # 이번 배포를 알아볼 이름 (인자로 넘긴다)
+BACKUP="backups/$(date +%Y%m%d-%H%M%S)-$LABEL"   # 시각이 붙어 절대 겹치지 않는다
 LOCAL="$(cd "$(dirname "$0")" && pwd)"
 
 echo "── 1. 로컬 검증 ──────────────────────────────────────────"

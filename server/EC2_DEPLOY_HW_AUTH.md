@@ -22,13 +22,22 @@ python3 -m unittest -v test_todo_matching test_todo_add
 ## 2. EC2 기존 파일 백업
 
 서비스를 건드리기 전에 EC2에서 백업 디렉터리를 만들고 현재 파일을 보존한다.
-백업 디렉터리는 **배포마다 새 이름**을 쓴다. 같은 이름을 재사용하면 직전 배포의
-롤백 지점이 덮여 사라진다.
+
+> `deploy_hw.sh`를 쓰면 이 절은 건너뛴다. 스크립트가 `backups/<배포시각>-<라벨>`로
+> 알아서 만든다(`bash server/deploy_hw.sh clova-switch`). 아래는 손으로 배포할 때만 쓴다.
+
+백업 디렉터리는 **배포마다 새 이름**을 쓴다. 이름을 재사용하면 두 방향으로 다치는데,
+둘 다 조용히 일어나서 사고 때까지 모른다.
+
+- 수동(아래 절차) — `cp -a`가 직전 롤백 지점을 덮어써 사라진다.
+- 스크립트 — 기존 백업을 보존하느라 **새 롤백 지점을 아예 안 만든다.**
+  2026-08-22 실제로 이 일이 났다. 전날 쓴 이름을 그대로 재실행해서, 롤백을 눌렀다면
+  전날 올린 커넥션 풀 수정까지 함께 되돌아갈 뻔했다. 그래서 자동 생성으로 바꿨다.
 
 ```bash
 ssh deskibot-osaka
 cd /home/ubuntu/Deskibot/server/hw
-BACKUP=backups/pre-voice-add-todo          # 배포 건마다 다른 이름
+BACKUP=backups/$(date +%Y%m%d-%H%M%S)-voice-add-todo   # 시각을 붙여 겹치지 않게
 mkdir -p "$BACKUP"
 cp -a server.py todo_matching.py requirements.txt "$BACKUP"/
 cp -a .env "$BACKUP"/.env
