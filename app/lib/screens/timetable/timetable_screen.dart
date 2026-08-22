@@ -96,8 +96,8 @@ class _SessionGroup {
       ..sort((a, b) => a.startMinutes.compareTo(b.startMinutes));
     final segs = <_Segment>[];
     for (int i = 0; i < sorted.length; i++) {
-      // 세션 간 갭 → 일시정지 세그먼트
-      if (i > 0) {
+      // 세션 간 갭 → 일시정지 세그먼트 (스톱워치만; 뽀모도로는 세션 사이 갭 표시 안 함)
+      if (i > 0 && sorted[0].sessionType != 'pomodoro') {
         final prevEnd  = sorted[i - 1].endMinutes;
         final curStart = sorted[i].startMinutes;
         if (curStart > prevEnd) {

@@ -133,7 +133,8 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (state == 'start') {
         if (type == 'pomodoro' &&
             duration != null &&
-            _pomodoro.status == TimerStatus.idle &&
+            (_pomodoro.status == TimerStatus.idle ||
+             _pomodoro.status == TimerStatus.finished) &&
             _pomodoro.sessionId != sessionId) {
           final remaining = (duration * 60 - elapsedSec).clamp(0, duration * 60);
           _pomodoro = PomodoroState(
