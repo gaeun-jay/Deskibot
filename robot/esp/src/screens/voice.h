@@ -494,11 +494,18 @@ static int _upload_read_head(float *srv_time, int *content_len) {
         String line = _up_tls.readStringUntil('\n');
         line.trim();
         if (line.length() == 0) break;
-        if (line.startsWith("X-Server-Time:"))
+        // HTTP 헤더 이름은 규격상 대소문자를 구분하지 않는다. 서버를 Flask에서
+        // FastAPI로 옮기면서 표기가 "Content-Length"에서 "content-length"로
+        // 바뀌었고, 그때 이 파싱이 통째로 조용히 실패했다. 응답은 200인데
+        // content_len이 -1로 남아 본문 길이를 모르게 되는 형태라 원인을 찾기
+        // 어렵다. 소문자로 맞춰 비교한다 — 값 추출 위치는 그대로다.
+        String key = line;
+        key.toLowerCase();
+        if (key.startsWith("x-server-time:"))
             *srv_time = line.substring(14).toFloat();
-        else if (line.startsWith("Content-Length:"))
+        else if (key.startsWith("content-length:"))
             *content_len = line.substring(15).toInt();
-        else if (line.startsWith("X-Stage-Times:"))
+        else if (key.startsWith("x-stage-times:"))
             Serial.printf("[LAT]   서버 단계  : %s\n", line.substring(14).c_str());
     }
     return code;

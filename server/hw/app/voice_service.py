@@ -21,25 +21,29 @@ TTS는 Google 그대로다.
 
 import hashlib, struct, time, os, json, wave, io
 from datetime import datetime
-from flask import Flask, request, Response
+from pathlib import Path
+
 from dotenv import load_dotenv
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from todo_add import (
+from app.todo_add import (
     normalize_content,
     parse_date,
     parse_deadline,
     resolve_category,
     resolve_notify,
 )
-from todo_matching import select_todo_candidate
-from voice_prompt import TOOLS, build_system_prompt
-from audio_codec import ulaw_to_pcm16
+from app.todo_matching import select_todo_candidate
+from app.voice_prompt import TOOLS, build_system_prompt
+from app.audio_codec import ulaw_to_pcm16
 
-load_dotenv()
+# .env 는 패키지 밖(server/hw/)에 있다. 실행 위치에 기대지 않도록 명시한다 —
+# uvicorn 을 어디서 띄우든 같은 파일을 읽는다. sw 서버와 같은 방식이다.
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
 
 from google.cloud import speech
 from google.cloud import texttospeech
@@ -47,7 +51,6 @@ from google.api_core.client_options import ClientOptions
 import anthropic
 import requests
 
-app    = Flask(__name__)
 claude = anthropic.Anthropic()
 
 # ─── 설정 ─────────────────────────────────────────────────────────────────────
@@ -126,9 +129,12 @@ db_pool = ConnectionPool(
 print("[PostgreSQL] ✅ device 인증 풀 연결 완료", flush=True)
 
 # ─── HW device 인증 ───────────────────────────────────────────────────────────
-def _authenticate_device() -> UUID | None:
-    """X-Device-Key를 검증하고 연결된 user_id를 반환한다."""
-    token = request.headers.get("X-Device-Key", "")
+def authenticate_device(token: str) -> UUID | None:
+    """device token 을 검증하고 연결된 user_id 를 반환한다.
+
+    HTTP 계층에서 헤더를 꺼내 넘긴다. 이 함수가 request 를 직접 보지 않으므로
+    웹 프레임워크와 무관하고, 나중에 server/common/ 으로 그대로 옮길 수 있다.
+    """
     if not token or len(token) > 127:
         return None
 
@@ -670,147 +676,3 @@ def pack_response(transcript: str, cmd_json: str, audio: bytes) -> bytes:
 
 
 # ─── 엔드포인트 ───────────────────────────────────────────────────────────────
-@app.route("/process", methods=["POST"])
-@app.route("/hw/process", methods=["POST"])
-def process():
-    try:
-        user_id = _authenticate_device()
-    except Exception:
-        print("[PostgreSQL] device 인증 조회 실패", flush=True)
-        return "service unavailable", 503
-    if not user_id:
-        return "unauthorized", 401
-
-    raw = request.data
-    if not raw:
-        return "no audio", 400
-
-    total_start = time.time()
-
-    # 기기가 업로드를 절반으로 줄이려고 µ-law로 보낼 수 있다. 헤더가 없으면
-    # 기존처럼 16-bit PCM으로 취급하므로 구형 펌웨어와 그대로 호환된다.
-    # 이후 파이프라인(덤프·STT)은 항상 PCM16만 본다.
-    encoding = (request.headers.get("X-Audio-Encoding") or "pcm16").lower()
-    if encoding == "mulaw":
-        pcm_in = ulaw_to_pcm16(raw)
-        print(f"[SERVER] µ-law {len(raw):,} bytes → PCM {len(pcm_in):,} bytes", flush=True)
-    elif encoding == "pcm16":
-        pcm_in = raw
-    else:
-        print(f"[SERVER] ❌ 알 수 없는 인코딩: {encoding}", flush=True)
-        return "unsupported audio encoding", 400
-
-    if DEBUG_DUMP_AUDIO:
-        _dump_pcm(pcm_in)
-
-    if DUMP_ONLY:
-        print("[DUMP] 녹음 전용 모드 — STT/LLM/TTS 건너뜀", flush=True)
-        return Response(
-            pack_response("녹음 저장됨", json.dumps({"action": "none"}), _confirm_beep()),
-            content_type="application/octet-stream",
-        )
-
-    print(f"\n{'='*60}", flush=True)
-    print(f"[SERVER] 수신: {len(pcm_in):,} bytes", flush=True)
-
-    try:
-        transcript = run_stt(pcm_in)
-        if not transcript:
-            msg  = "음성이 인식되지 않았습니다. 다시 시도해 주세요."
-            body = pack_response("", json.dumps({"action": "none"}), run_tts(msg))
-            return Response(body, content_type="application/octet-stream",
-                            headers={"X-Server-Time": f"{time.time()-total_start:.3f}"})
-
-        t_stt = time.time() - total_start
-        cmd_json, tts_text = run_llm(user_id, transcript)
-        t_llm = time.time() - total_start - t_stt
-        audio_pcm          = run_tts(tts_text)
-        body               = pack_response(transcript, cmd_json, audio_pcm)
-        elapsed = time.time() - total_start
-
-        print(f"[SERVER] ✅ {elapsed:.2f}s | {len(body):,} bytes", flush=True)
-        print(f"{'='*60}", flush=True)
-        # 기기가 '왕복 총시간 − 서버 처리시간 = 네트워크 시간'을 계산할 수 있게
-        # 단계별 소요를 헤더로 실어 보낸다. 본문 형식은 건드리지 않는다.
-        return Response(body, content_type="application/octet-stream", headers={
-            "X-Server-Time": f"{elapsed:.3f}",
-            "X-Stage-Times": f"stt={t_stt:.3f},llm={t_llm:.3f},"
-                             f"tts={elapsed - t_stt - t_llm:.3f}",
-        })
-
-    except Exception as e:
-        import traceback
-        print(f"[SERVER] ❌ {e}", flush=True)
-        traceback.print_exc()
-        return "internal server error", 500
-
-
-@app.route("/todos", methods=["GET"])
-@app.route("/hw/todos", methods=["GET"])
-def todos():
-    """로봇이 오늘 할 일과 마감 알림 대상을 읽어간다(Firestore 폴링 대체).
-
-    인증된 user_id로만 조회하므로 시리얼 `token` 명령으로 사용자를 바꾸면
-    할 일도 함께 바뀐다. 기존 ESP는 FS_USER_ID가 컴파일 상수라 토큰을 바꿔도
-    남의 할 일을 계속 보여줄 수 있었다.
-    """
-    try:
-        user_id = _authenticate_device()
-    except Exception:
-        print("[PostgreSQL] device 인증 조회 실패", flush=True)
-        return "service unavailable", 503
-    if not user_id:
-        return "unauthorized", 401
-
-    today = datetime.now(KST).date()
-    try:
-        with db_pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT content, deadline_time, notify, notify_before_min
-                      FROM todos
-                     WHERE user_id = %s
-                       AND date = %s
-                       AND is_done = false
-                     ORDER BY deadline_time NULLS LAST, id
-                     LIMIT 20
-                    """,
-                    (user_id, today),
-                )
-                rows = cur.fetchall()
-    except Exception:
-        print("[PostgreSQL] todos 조회 실패", flush=True)
-        return "service unavailable", 503
-
-    # ESP 힙이 빠듯하므로 필요한 필드만 담는다. 알림 관련 필드는 notify가 켜져
-    # 있고 마감/사전알림이 모두 있는 항목에만 넣는다(ESP가 그 조합만 사용).
-    items = []
-    for row in rows:
-        item = {"content": row["content"]}
-        if row["notify"] and row["deadline_time"] is not None \
-                and row["notify_before_min"] is not None:
-            item["deadline_time"] = row["deadline_time"].strftime("%H:%M")
-            item["notify_before_min"] = int(row["notify_before_min"])
-        items.append(item)
-
-    print(f"[TODOS] {len(items)}건 응답", flush=True)
-    return Response(
-        json.dumps({"date": today.isoformat(), "todos": items}, ensure_ascii=False),
-        content_type="application/json; charset=utf-8",
-    )
-
-
-@app.route("/health", methods=["GET"])
-def health():
-    return "ok"
-
-
-if __name__ == "__main__":
-    print(f"[SERVER] Deskibot Voice Pipeline")
-    print(f"[SERVER]   STT  : Google Cloud Speech (ko-KR)")
-    print(f"[SERVER]   LLM  : Claude {CLAUDE_MODEL} + Tool Use")
-    print(f"[SERVER]   TTS  : Google Cloud TTS ({TTS_VOICE})")
-    print("[SERVER]   Auth : PostgreSQL devices.token_hash")
-    print(f"{'='*60}")
-    app.run(host="0.0.0.0", port=8000, debug=False)

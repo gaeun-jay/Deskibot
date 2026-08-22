@@ -7,8 +7,14 @@
 # 이 파일은 서버에만 있던 것을 레포로 옮긴 것이다. 인스턴스가 날아가면
 # 서비스 정의를 손으로 복원해야 했다.
 #
-# --timeout 120: 음성 한 건이 STT → Claude → TTS 를 거치므로 기본값(30초)
-# 으로는 gunicorn 이 워커를 죽인다. 긴 발화에서 응답이 끊기면 이 값부터 볼 것.
+# gunicorn(Flask) 에서 uvicorn(FastAPI) 으로 옮겼다. sw 서버와 스택을 맞춘 것이고
+# 프로세스·포트·유닛은 계속 분리되어 있다 — 나중에 hw 를 별도 인스턴스로
+# 옮길 때 코드를 고치지 않기 위해서다.
+#
+# gunicorn sync 워커는 요청을 한 번에 하나만 처리했다. 음성 한 건이 STT →
+# Claude → TTS 로 몇 초씩 걸리는 동안 두 번째 요청은 줄을 섰다. FastAPI 는
+# 블로킹 핸들러를 스레드풀에서 돌리므로 워커가 하나여도 동시에 처리된다.
+# 그래서 gunicorn 의 --timeout 120 에 해당하는 설정이 필요 없어졌다.
 #
 # --workers 1: sw 와 달리 hw 는 프로세스 메모리에 상태를 두지 않으므로
 # 정합성 문제로 1인 것은 아니다. t3.small 에서 STT/TTS 호출이 메모리를
@@ -24,7 +30,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/Deskibot/server/hw
 Environment="PATH=/home/ubuntu/Deskibot/server/hw/.venv/bin"
-ExecStart=/home/ubuntu/Deskibot/server/hw/.venv/bin/gunicorn --workers 1 --bind 127.0.0.1:8000 --timeout 120 server:app
+ExecStart=/home/ubuntu/Deskibot/server/hw/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 Restart=always
 RestartSec=5
 

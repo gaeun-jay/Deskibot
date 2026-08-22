@@ -1,6 +1,6 @@
 import unittest
 
-from todo_matching import normalize_todo_text, select_todo_candidate
+from app.todo_matching import normalize_todo_text, select_todo_candidate
 
 
 class TodoMatchingTests(unittest.TestCase):

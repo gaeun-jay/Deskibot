@@ -22,15 +22,18 @@ LOCAL="$(cd "$(dirname "$0")" && pwd)"
 
 echo "── 1. 로컬 검증 ──────────────────────────────────────────"
 cd "$LOCAL"
-python3 -m py_compile server.py todo_matching.py todo_add.py register_test_device.py
+python3 -m py_compile app/*.py tools/*.py
 python3 -m unittest test_todo_matching test_todo_add 2>&1 | tail -3
 
 echo
 echo "── 2. 전송 ───────────────────────────────────────────────"
 ssh "$HOST" "mkdir -p $STAGE"
-rsync -av \
-    server.py voice_prompt.py audio_codec.py todo_matching.py todo_add.py requirements.txt register_test_device.py \
-    "$HOST:$STAGE/"
+# app/ 을 통째로 옮긴다. 예전에는 파일을 하나씩 나열해서, 새 모듈을 만들고
+# 여기 추가하는 걸 잊으면 서버가 기동조차 못 했다.
+# --delete 는 쓰지 않는다 — 서버에만 있는 파일을 지우는 사고를 막는다.
+rsync -av --exclude='__pycache__' app/ "$HOST:$STAGE/app/"
+rsync -av --exclude='__pycache__' tools/ "$HOST:$STAGE/tools/"
+rsync -av requirements.txt "$HOST:$STAGE/"
 
 echo
 echo "── 3. 백업 · 설치 · 재시작 ───────────────────────────────"
@@ -42,32 +45,40 @@ if [ -e "$BACKUP" ]; then
     echo "[backup] $BACKUP 이미 존재 — 그대로 둔다"
 else
     mkdir -p "$BACKUP"
-    cp -a server.py todo_matching.py requirements.txt "$BACKUP"/
-    # voice_prompt.py는 이번 배포에서 처음 올라가므로 아직 없을 수 있다
-    for f in voice_prompt.py audio_codec.py; do
+    cp -a requirements.txt "$BACKUP"/
+    # app/ 은 이번 배포에서 처음 생긴다(예전에는 파일이 평평하게 놓여 있었다).
+    [ -e app ] && cp -a app "$BACKUP"/ || true
+    for f in server.py voice_prompt.py audio_codec.py todo_matching.py todo_add.py; do
         [ -e "$f" ] && cp -a "$f" "$BACKUP"/ || true
     done
     echo "[backup] $BACKUP 생성 완료"
 fi
 
-install -m 640 "$STAGE/server.py"             server.py
-install -m 640 "$STAGE/voice_prompt.py"       voice_prompt.py
-install -m 640 "$STAGE/audio_codec.py"        audio_codec.py
-install -m 640 "$STAGE/todo_matching.py"      todo_matching.py
-install -m 640 "$STAGE/todo_add.py"           todo_add.py
-install -m 640 "$STAGE/requirements.txt"      requirements.txt
-install -m 750 "$STAGE/register_test_device.py" register_test_device.py
+mkdir -p app tools
+rsync -a --exclude='__pycache__' "$STAGE/app/"   app/
+rsync -a --exclude='__pycache__' "$STAGE/tools/" tools/
+chmod 750 tools/*
+install -m 640 "$STAGE/requirements.txt" requirements.txt
+
+# 평평하던 시절의 파일이 남아 있으면 지운다. 남겨두면 uvicorn 이 app/ 을 쓰는데
+# 옛 server.py 가 옆에 있어, 어느 코드가 도는지 헷갈린다.
+rm -f server.py voice_prompt.py audio_codec.py todo_matching.py todo_add.py \
+      register_test_device.py seed_test_fixtures.py watch_todos.py
 
 .venv/bin/pip install -q -r requirements.txt
-.venv/bin/python -m py_compile server.py voice_prompt.py audio_codec.py todo_matching.py todo_add.py
-.venv/bin/python -c 'import todo_add, todo_matching, voice_prompt, audio_codec; assert len(voice_prompt.TOOLS) == 4; assert audio_codec.ulaw_to_pcm16(bytes([0xFF])) == bytes(2); print("[check] import ok")'
+.venv/bin/python -m py_compile app/*.py
+# app.main 을 실제로 import 한다. 라우트 등록과 커넥션 풀 생성까지 여기서
+# 걸러지므로, 문제가 있으면 서비스를 재시작하기 전에 실패한다.
+.venv/bin/python -c 'from app.main import app; from app import voice_prompt, audio_codec; assert len(voice_prompt.TOOLS) == 4; assert audio_codec.ulaw_to_pcm16(bytes([0xFF])) == bytes(2); print(f"[check] import ok, 라우트 {len(app.routes)}개")'
 
 rollback() {
     echo "[rollback] 실패 감지 — $BACKUP 으로 되돌린다" >&2
-    cp -a "$BACKUP"/server.py        server.py
-    cp -a "$BACKUP"/voice_prompt.py  voice_prompt.py 2>/dev/null || true
-    cp -a "$BACKUP"/audio_codec.py   audio_codec.py  2>/dev/null || true
-    cp -a "$BACKUP"/todo_matching.py todo_matching.py
+    rm -rf app
+    [ -e "$BACKUP"/app ] && cp -a "$BACKUP"/app app || true
+    # app/ 이전 버전으로 되돌리는 경우 평평한 파일들도 복원해야 한다
+    for f in server.py voice_prompt.py audio_codec.py todo_matching.py todo_add.py; do
+        [ -e "$BACKUP/$f" ] && cp -a "$BACKUP/$f" "$f" || true
+    done
     cp -a "$BACKUP"/requirements.txt requirements.txt
     sudo systemctl restart deskibot-hw.service || true
     sudo systemctl status deskibot-hw.service --no-pager || true
