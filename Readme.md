@@ -42,7 +42,9 @@ Deskibot(Attenti)은 2026 한이음 드림업 프로젝트로, 책상에 거치�
 ![ESP32](https://img.shields.io/badge/ESP32--S3-E7352C?style=flat-square&logo=espressif&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white)
 ![C++](https://img.shields.io/badge/C++-00599C?style=flat-square&logo=cplusplus&logoColor=white)
-![Firebase](https://img.shields.io/badge/Firebase-FFCA28?style=flat-square&logo=firebase&logoColor=black)
+![AWS EC2](https://img.shields.io/badge/AWS%20EC2-232F3E?style=flat-square&logo=amazonec2&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white)
+![Flutter](https://img.shields.io/badge/Flutter-02569B?style=flat-square&logo=flutter&logoColor=white)
 ![MediaPipe](https://img.shields.io/badge/MediaPipe-0097A7?style=flat-square&logo=google&logoColor=white)
 ![Figma](https://img.shields.io/badge/Figma-F24E1E?style=flat-square&logo=figma&logoColor=white)
 
@@ -52,41 +54,120 @@ Deskibot(Attenti)은 2026 한이음 드림업 프로젝트로, 책상에 거치�
 | 메인 컴퓨터 | Raspberry Pi 5 8GB |
 | 디스플레이 보드 | Waveshare ESP32-S3-Touch-AMOLED-1.75 |
 | 졸음 감지 | MediaPipe FaceMesh + Pose |
-| 스마트폰 감지 | YOLO |
+| 스마트폰 감지 | MediaPipe ObjectDetector + EfficientDet-Lite0 |
 | 팬틸트 | SG90 서보모터 2축 |
 | 보드 간 통신 | UART (~1ms 레이턴시) |
-| AI 피드백 | LLM + TTS |
-| 음성 입력 | 마이크 + STT |
+| AI 피드백 | Claude + Google TTS |
+| 음성 입력 | 마이크 + CLOVA STT (실패 시 Google 대체) |
 | 임베디드 UI | LVGL |
-| 백엔드 | Firebase Realtime DB |
-| 프론트엔드 | 모바일 플랫폼 + 어드민 대시보드 |
+| 백엔드 | AWS EC2 (nginx + Flask · FastAPI) + PostgreSQL 16 |
+| 프론트엔드 | Flutter |
 | 카메라 | Pi Camera Module 3 |
 
 ---
 
 ## 프로젝트 구조
 
+"어디서 도는가"로 나눈다. 팀이 아니라 실행 위치 기준이라, 폴더 이름만 봐도
+그 코드가 로봇 안에서 도는지 EC2에서 도는지 폰에서 도는지 알 수 있다.
+
 ```
 Deskibot/
-├── rpi/                # Raspberry Pi 5 코드
-│   ├── detection/      # MediaPipe(졸음), YOLO(스마트폰) 감지
-│   ├── tracking/       # 서보모터 팬틸트 추적
-│   ├── feedback/       # LLM 습관 분석 + TTS 피드백
-│   └── uart/           # ESP32-S3 통신
+├── robot/              # 로봇 안에서 도는 것
+│   ├── esp/            #   ESP32-S3 펌웨어 (PlatformIO)
+│   │   ├── src/        #     LVGL 화면, 음성, UART, AWS 연동
+│   │   ├── include/    #     오디오 코덱, 핀 정의
+│   │   └── lib/        #     XPowersLib 등 외부 라이브러리
+│   └── rpi/            #   Raspberry Pi 5
+│       ├── detection/  #     졸음(FaceMesh)·스마트폰(EfficientDet) 감지
+│       ├── tracking/   #     서보모터 팬틸트 추적
+│       ├── comm/       #     ESP32 UART, 모니터링 스트림
+│       └── tools/      #     서보 점검 스크립트
 │
-├── esp/                # ESP32-S3 코드
-│   ├── ui/             # LVGL UI, 알림 팝업, 뽀모도로/스톱워치
-│   ├── stt/            # 마이크 + STT
-│   └── uart/           # RPi 통신
+├── server/             # EC2에서 도는 것
+│   └── hw/             #   음성 파이프라인 (Flask, :8000, /hw/*)
+│       ├── bench/      #     STT 엔진 비교 벤치마크와 근거 데이터
+│       └── sql/        #     HW가 쓰는 뷰 정의
 │
-├── platform/           # 모바일 플랫폼
-│   ├── mobile/         # 사용자 모바일 화면
-│   └── dashboard/      # 어드민 대시보드
-│
-├── firebase/           # Firebase 스키마, Rules, 설정
-│
-└── docs/               # 설계 문서, 회의록
+└── docs/               # 설계 문서, 인수인계, 작업 로그
 ```
+
+SW 파트(`server/sw/`, `app/`, `database/`)는 `sw-temp` 브랜치에서 개발 중이며
+같은 구조로 합류할 예정이다.
+
+---
+
+## 시작하기
+
+네 갈래가 독립적으로 돈다. 필요한 것만 준비하면 된다.
+
+### robot/esp — ESP32-S3 펌웨어
+
+PlatformIO에서 **`robot/esp` 폴더를 프로젝트로 연다** (저장소 루트가 아니다).
+
+```bash
+cd robot/esp
+pio run              # 빌드
+pio run -t upload    # 업로드
+pio device monitor   # 시리얼 접속
+```
+
+업로드 후 시리얼로 기기를 사용자에게 연결한다. 토큰은 NVS에 저장되어
+재부팅·전원차단·펌웨어 재업로드에도 유지되므로 한 번만 넣으면 된다.
+
+```
+token <device_token>
+→ [Token] 저장됨 (len=43) — WS 재연결
+→ [AWS WS] 인증 완료
+```
+
+토큰은 `server/hw/register_test_device.py`로 발급한다. WiFi는 아직
+`src/wifi_handler.h`에 컴파일되므로 바꾸려면 다시 빌드해야 한다.
+
+### robot/rpi — Raspberry Pi 5
+
+`picamera2`는 libcamera 바인딩이 필요해 pip으로 설치되지 않는다.
+
+```bash
+sudo apt install -y python3-picamera2
+cd robot/rpi
+pip install -r requirements.txt
+python main.py
+```
+
+**감지 모델 파일이 저장소에 없다.** 용량 때문에 `.gitignore` 처리되어 있으므로
+`detection/efficientdet_lite0.tflite`를 따로 내려받아 넣어야 스마트폰 감지가 동작한다.
+
+### server/hw — 음성 서버 (EC2)
+
+```bash
+bash server/hw/deploy_hw.sh <라벨>
+```
+
+로컬 검증 → 백업 → 전송 → 재시작 → health 확인 순으로 돌고, 실패하면 자동으로
+직전 상태로 롤백한다. 백업은 `backups/<배포시각>-<라벨>`로 쌓인다.
+자세한 절차와 수동 배포는 `server/hw/EC2_DEPLOY_HW_AUTH.md`를 본다.
+
+### app — Flutter (sw-temp 브랜치)
+
+```bash
+flutter build apk
+```
+
+기본 서버 주소가 운영(`https://api.deskibot.co.kr`)이라 별도 옵션이 필요 없다.
+로컬 서버로 붙일 때만 `--dart-define=API_BASE_URL=...`로 덮어쓴다.
+
+---
+
+## 자격증명
+
+저장소에 자격증명을 커밋하지 않는다. `.gitignore`가 경로가 아니라 **이름으로**
+막으므로(`secrets.h`, `.env`) 폴더 구조가 바뀌어도 규칙이 따라간다.
+
+| 파일 | 용도 | 얻는 곳 |
+|------|------|---------|
+| `server/hw/.env` | Anthropic·CLOVA·DB 자격증명 | `server/hw/.env.example` 참고 |
+| ESP device token | 로봇↔서버 인증 | `register_test_device.py`로 발급 후 시리얼 입력 |
 
 ---
 
