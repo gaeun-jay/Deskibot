@@ -57,6 +57,12 @@ def hhmm(ts):
     return ts.astimezone(KST).strftime("%H:%M:%S") if ts else "-"
 
 
+def mmss(sec):
+    if sec is None:
+        return "  -  "
+    return f"{sec // 60:>2}:{sec % 60:02d}"
+
+
 def fetch(cur, login_id):
     cur.execute("SELECT id, login_id, name FROM users WHERE login_id = %s", (login_id,))
     user = cur.fetchone()
@@ -97,6 +103,36 @@ def fetch(cur, login_id):
         )
         events = cur.fetchall()
 
+    # 최근 세션 목록. actual_duration_sec 는 로봇/앱이 계산해 보낸 순수 집중
+    # 시간이고, 벽시계(ended-started)에서 정지 시간을 뺀 값과 일치해야 한다.
+    # 어긋나면 타이머가 시간을 잃고 있다는 뜻이다.
+    cur.execute(
+        """
+        SELECT type, status, started_at, ended_at,
+               planned_duration_sec, actual_duration_sec,
+               total_pause_duration_sec,
+               EXTRACT(EPOCH FROM (ended_at - started_at))::int AS wall_sec,
+               initiated_by, last_changed_by
+          FROM focus_sessions
+         WHERE user_id = %s
+         ORDER BY started_at DESC
+         LIMIT 8
+        """,
+        (uid,),
+    )
+    recent = cur.fetchall()
+
+    cur.execute(
+        """
+        SELECT count(*) AS n, COALESCE(sum(actual_duration_sec), 0) AS total
+          FROM focus_sessions
+         WHERE user_id = %s
+           AND session_date = (now() AT TIME ZONE 'Asia/Seoul')::date
+        """,
+        (uid,),
+    )
+    today_sum = cur.fetchone()
+
     cur.execute(
         """
         SELECT content, deadline_time, notify, notify_before_min, is_done
@@ -108,7 +144,8 @@ def fetch(cur, login_id):
         (uid,),
     )
     todos = cur.fetchall()
-    return {"user": user, "session": session, "events": events, "todos": todos}
+    return {"user": user, "session": session, "events": events, "todos": todos,
+            "recent": recent, "today": today_sum}
 
 
 def render(d, interval, changed):
@@ -147,6 +184,33 @@ def render(d, interval, changed):
                    + (f"   {GREEN}← 양방향 확인{RESET}" if both else ""))
         if s["planned_duration_sec"]:
             out.append(f"  {DIM}계획{RESET} {s['planned_duration_sec']//60}분")
+    out.append("")
+
+    t = d["today"]
+    out.append(f"{BOLD}최근 세션{RESET}   "
+               f"{DIM}오늘{RESET} {CYAN}{t['n']}회 {mmss(int(t['total']))}{RESET}")
+    out.append(f"  {DIM}종류       시작     실행    계획   정지   상태          주체{RESET}")
+    for r in d["recent"]:
+        if r["ended_at"] is None:
+            length = f"{GREEN}진행 중{RESET}"
+            gap = ""
+        else:
+            length = mmss(r["actual_duration_sec"])
+            # 실행 + 정지 가 벽시계와 맞아야 한다. 어긋나면 타이머가 시간을
+            # 잃고 있다는 뜻이라 초 단위 차이를 표시한다.
+            expect = (r["wall_sec"] or 0) - (r["total_pause_duration_sec"] or 0)
+            diff = (r["actual_duration_sec"] or 0) - expect
+            gap = "" if abs(diff) <= 2 else f" {RED}({diff:+d}초){RESET}"
+        planned = mmss(r["planned_duration_sec"]) if r["planned_duration_sec"] else "  -  "
+        st = r["status"]
+        st_col = (GREEN if st == "completed" else
+                  YELLOW if st == "in_progress" else DIM)
+        주체 = r["initiated_by"]
+        if r["last_changed_by"] != r["initiated_by"]:
+            주체 = f"{r['initiated_by']}→{r['last_changed_by']}"
+        out.append(f"  {r['type']:<10} {hhmm(r['started_at'])[:5]}  {length:>7}{gap}"
+                   f"  {planned}  {(r['total_pause_duration_sec'] or 0):>3}초"
+                   f"  {st_col}{st:<12}{RESET} {CYAN}{주체}{RESET}")
     out.append("")
 
     out.append(f"{BOLD}세션 이벤트{RESET} {DIM}(최근 6){RESET}")
