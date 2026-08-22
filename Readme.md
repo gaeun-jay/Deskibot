@@ -112,17 +112,25 @@ pio run -t upload    # 업로드
 pio device monitor   # 시리얼 접속
 ```
 
-업로드 후 시리얼로 기기를 사용자에게 연결한다. 토큰은 NVS에 저장되어
-재부팅·전원차단·펌웨어 재업로드에도 유지되므로 한 번만 넣으면 된다.
+업로드한 뒤 시리얼로 두 가지를 넣는다. **둘 다 NVS에 저장되어 재부팅·전원차단·
+펌웨어 재업로드에도 유지되므로 한 번만 넣으면 된다.** 소스에 자격증명을 두지 않는
+이유이자, 시연장 WiFi가 달라도 재플래싱하지 않는 이유다.
 
 ```
+wifi <SSID> <비밀번호>          # 개방망이면 비밀번호 생략
+→ [WiFi] 저장됨 SSID="..." (비밀번호 9자) — 재연결
+→ [WiFi] ✅ IP: 192.168.0.42
+
 token <device_token>
 → [Token] 저장됨 (len=43) — WS 재연결
 → [AWS WS] 인증 완료
 ```
 
-토큰은 `server/hw/register_test_device.py`로 발급한다. WiFi는 아직
-`src/wifi_handler.h`에 컴파일되므로 바꾸려면 다시 빌드해야 한다.
+부팅 시 저장된 WiFi가 없으면 주변 네트워크를 스캔해 목록을 보여주고 위 명령을
+안내한다. SSID에 공백이 있어도 되지만(`wifi iPhone 15 mypassword`) 비밀번호에는
+쓸 수 없다 — 마지막 공백을 기준으로 가르기 때문이다.
+
+device token은 `server/hw/register_test_device.py`로 발급한다.
 
 ### robot/rpi — Raspberry Pi 5
 
