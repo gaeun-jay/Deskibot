@@ -627,6 +627,8 @@ class _SessionItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final type = session['type'] as String? ?? '';
+    final status = session['status'] as String? ?? '';
+    final isIncomplete = status == 'incomplete';
     final plannedMin =
         ((session['planned_duration_sec'] as num?)?.toInt() ?? 0) ~/ 60;
     final actualSec =
@@ -636,7 +638,11 @@ class _SessionItem extends StatelessWidget {
 
     final String label;
     if (type == 'pomodoro') {
-      label = plannedMin > 0 ? '$plannedMin분 완료' : '뽀모도로 완료';
+      if (isIncomplete) {
+        label = actualSec > 0 ? '${_fmtDuration(actualSec)} 중간 종료' : '뽀모도로 중간 종료';
+      } else {
+        label = plannedMin > 0 ? '$plannedMin분 완료' : '뽀모도로 완료';
+      }
     } else {
       label = actualSec > 0 ? '스톱워치 ${_fmtDuration(actualSec)}' : '스톱워치 완료';
     }
@@ -687,20 +693,24 @@ class _SessionItem extends StatelessWidget {
             ),
           ),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
-            decoration: BoxDecoration(
-              color: const Color(0xFFE4F3ED),
-              borderRadius: BorderRadius.circular(30),
-            ),
-            child: const Text(
-              '완료',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF07733B),
+              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+              decoration: BoxDecoration(
+                color: (type == 'pomodoro' && isIncomplete)
+                    ? const Color(0xFFFFF3E0)
+                    : const Color(0xFFE4F3ED),
+                borderRadius: BorderRadius.circular(30),
+              ),
+              child: Text(
+                (type == 'pomodoro' && isIncomplete) ? '미완료' : '완료',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: (type == 'pomodoro' && isIncomplete)
+                      ? const Color(0xFFE65100)
+                      : const Color(0xFF07733B),
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
@@ -924,27 +934,33 @@ class _AlarmBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final msg = p.drowsyStartedAt != null ? '졸음이 감지되었습니다!' : '폰 사용이 감지되었습니다!';
+    final isDrowsy = p.drowsyStartedAt != null;
+    final msg = isDrowsy ? '졸음이 감지되었습니다!' : '폰 사용이 감지되었습니다!';
+    final bgColor    = isDrowsy ? Colors.orange.shade50  : Colors.red.shade50;
+    final borderColor= isDrowsy ? Colors.orange.shade300 : Colors.red.shade300;
+    final iconColor  = isDrowsy ? Colors.orange.shade600 : Colors.red.shade600;
+    final textColor  = isDrowsy ? Colors.orange.shade800 : Colors.red.shade700;
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.red.shade50,
+        color: bgColor,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.red.shade300),
+        border: Border.all(color: borderColor),
       ),
       child: Row(
         children: [
           Icon(
             Icons.warning_amber_rounded,
-            color: Colors.red.shade600,
+            color: iconColor,
             size: 20,
           ),
           const SizedBox(width: 8),
           Text(
             msg,
             style: TextStyle(
-              color: Colors.red.shade700,
+              color: textColor,
               fontWeight: FontWeight.w600,
               fontSize: 13,
             ),
