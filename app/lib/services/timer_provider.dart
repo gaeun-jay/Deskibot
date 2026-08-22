@@ -5,7 +5,10 @@ import 'package:flutter/widgets.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 
+import '../models/focus_session_model.dart';
 import '../models/timer_state.dart';
+import '../services/focus_session_service.dart';
+import '../services/notification_service.dart';
 import '../services/timer_service.dart';
 
 class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
@@ -41,6 +44,62 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool get isAlarming => _isAlarming;
 
   final _ringtone = FlutterRingtonePlayer();
+
+  /// 마지막으로 관찰한 "집중 세션이 도는 중" 여부.
+  /// 세션이 시작·종료되는 순간을 잡아내기 위한 것이다.
+  bool _focusActive = false;
+
+  /// 집중 세션이 진행 중인지. 뽀모도로든 스톱워치든, 실행 중이든 일시정지든
+  /// 세션이 열려 있으면 집중 중으로 본다.
+  bool get _isFocusActive =>
+      _pomodoro.status == TimerStatus.running ||
+      _pomodoro.status == TimerStatus.paused ||
+      _stopwatch.status == TimerStatus.running ||
+      _stopwatch.status == TimerStatus.paused;
+
+  /// 상태가 바뀔 때마다 불린다.
+  ///
+  /// 세션 시작/종료는 앱에서만 일어나는 게 아니다. ESP32 가 시작시키거나
+  /// 자리이탈로 끝나기도 해서, 개별 함수마다 처리를 심으면 빠뜨리는 경로가
+  /// 생긴다. 그래서 상태 변화가 흘러가는 길목인 notifyListeners 한 곳에서
+  /// 전환만 잡아낸다.
+  @override
+  void notifyListeners() {
+    _syncFocusSideEffects();
+    super.notifyListeners();
+  }
+
+  void _syncFocusSideEffects() {
+    final active = _isFocusActive;
+    if (active == _focusActive) return;
+    _focusActive = active;
+
+    // 어느 쪽이든 실패가 타이머를 망가뜨리면 안 되므로 예외는 삼키고 로그만
+    // 남긴다. 알림이 안 걸리는 것보다 집중 세션이 끊기는 게 더 나쁘다.
+    if (active) {
+      // 집중 중에는 할 일 마감 알림이 뜨지 않게 막는다.
+      NotificationService.instance.suspend().catchError(
+            (e) => debugPrint('[알림] 보류 실패: $e'),
+          );
+      return;
+    }
+
+    NotificationService.instance.resume().catchError(
+          (e) => debugPrint('[알림] 복구 실패: $e'),
+        );
+
+    // 세션이 끝났으니 홈의 "오늘의 집중 현황"을 다시 불러온다.
+    // 서버가 focus_end 를 받아 집계를 마칠 틈을 조금 준다 — 곧바로 부르면
+    // 방금 끝난 세션이 아직 안 잡힌 예전 값을 그대로 받는다.
+    Future.delayed(const Duration(seconds: 2), () {
+      FocusSessionService().refresh().catchError(
+        (e) {
+          debugPrint('[집중현황] 갱신 실패: $e');
+          return const <FocusSessionModel>[];
+        },
+      );
+    });
+  }
 
   // ══════════════════════════════════════════════════════════
   // current_state listen

@@ -13,8 +13,9 @@
 //   마감·알림 수정                       →  취소 후 재예약
 //   삭제                                 →  취소
 //   알림 시각이 이미 지났으면            →  예약하지 않음
+//   집중 세션(뽀모도로·스톱워치) 진행 중 →  보류, 세션이 끝나면 되돌림
 //
-// 마지막 규칙이 중요하다. 지난 시각으로 예약하면 안드로이드가 즉시 띄우기
+// 지난 시각 규칙이 중요하다. 지난 시각으로 예약하면 안드로이드가 즉시 띄우기
 // 때문에, 오래된 할 일의 체크를 해제하는 순간 알림이 튀어나온다.
 
 import 'package:flutter/foundation.dart';
@@ -32,6 +33,13 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
 
   bool _ready = false;
+
+  /// 집중 세션이 도는 동안 true. 이때는 예약을 새로 걸지 않는다.
+  bool _suspended = false;
+  bool get isSuspended => _suspended;
+
+  /// 세션 시작 때 걷어낸 예약. 끝나면 이걸로 되돌린다.
+  List<PendingNotificationRequest> _held = const [];
 
   /// 할 일 채널. 안드로이드는 채널 단위로 소리·중요도를 관리한다.
   static const _channel = AndroidNotificationChannel(
@@ -93,26 +101,14 @@ class NotificationService {
     await init();
     await cancel(todo.id);
 
+    // 집중 세션 중에는 새로 걸지 않는다. 세션이 끝나면 resume() 이
+    // 보류해둔 것과 함께 다시 잡아준다.
+    if (_suspended) return;
+
     final at = _scheduledTimeFor(todo);
     if (at == null) return;
 
-    await _plugin.zonedSchedule(
-      _idOf(todo.id),
-      '마감이 다가와요',
-      todo.content,
-      at,
-      NotificationDetails(
-        android: AndroidNotificationDetails(
-          _channel.id,
-          _channel.name,
-          channelDescription: _channel.description,
-          importance: Importance.high,
-          priority: Priority.high,
-        ),
-      ),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-    );
-
+    await _schedule(_idOf(todo.id), '마감이 다가와요', todo.content, at);
     debugPrint('[알림] 예약 "${todo.content}" → $at');
   }
 
@@ -128,6 +124,93 @@ class NotificationService {
     for (final todo in todos) {
       await sync(todo);
     }
+  }
+
+  /// 실제 예약. sync() 와 resume() 이 함께 쓴다.
+  ///
+  /// payload 에 예약 시각을 넣어두는 게 핵심이다. 안드로이드는 예약 목록을
+  /// 돌려줄 때 id/제목/본문/payload 만 주고 "언제" 는 안 알려주기 때문에,
+  /// 세션이 끝난 뒤 원래 시각으로 되돌리려면 우리가 직접 적어둬야 한다.
+  Future<void> _schedule(
+    int id,
+    String title,
+    String body,
+    tz.TZDateTime at,
+  ) async {
+    await _plugin.zonedSchedule(
+      id,
+      title,
+      body,
+      at,
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          _channel.id,
+          _channel.name,
+          channelDescription: _channel.description,
+          importance: Importance.high,
+          priority: Priority.high,
+        ),
+      ),
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      payload: at.toIso8601String(),
+    );
+  }
+
+  // ── 집중 세션 중 보류 ─────────────────────────────────────────────
+
+  /// 집중 세션(뽀모도로·스톱워치) 동안 알림이 뜨지 않게 막는다.
+  ///
+  /// 알림은 안드로이드가 예약해뒀다가 스스로 띄우는 것이라, 뜨는 순간에
+  /// 앱이 끼어들어 막을 방법이 없다. 그래서 세션이 시작될 때 예약을 통째로
+  /// 걷어내고, 끝날 때 [resume] 으로 되돌린다.
+  Future<void> suspend() async {
+    if (_suspended) return;
+    await init();
+    _suspended = true;
+
+    // 예약 시각은 payload 에 적어둔 것으로 복원한다.
+    _held = await _plugin.pendingNotificationRequests();
+    await _plugin.cancelAll();
+
+    debugPrint('[알림] 집중 세션 시작 — 예약 ${_held.length}건 보류');
+  }
+
+  /// 보류해둔 알림을 되돌린다. 세션이 끝날 때 부른다.
+  ///
+  /// 세션이 도는 동안 시각이 지나버린 것은 되살리지 않는다. 지난 시각으로
+  /// 예약하면 안드로이드가 그 자리에서 띄우기 때문에, 집중이 끝나자마자
+  /// 밀린 알림이 한꺼번에 쏟아진다.
+  Future<void> resume() async {
+    if (!_suspended) return;
+    await init();
+    _suspended = false;
+
+    final now = tz.TZDateTime.now(tz.local);
+    var restored = 0;
+    var expired = 0;
+
+    for (final held in _held) {
+      final raw = held.payload;
+      final parsed = raw == null ? null : DateTime.tryParse(raw);
+      if (parsed == null) continue;
+
+      final at = tz.TZDateTime.from(parsed, tz.local);
+      if (!at.isAfter(now)) {
+        expired++;
+        continue;
+      }
+
+      await _schedule(
+        held.id,
+        held.title ?? '마감이 다가와요',
+        held.body ?? '',
+        at,
+      );
+      restored++;
+    }
+
+    _held = const [];
+    debugPrint('[알림] 집중 세션 종료 — $restored건 복구, $expired건은 시각이 지나 생략');
   }
 
   // ── 계산 ──────────────────────────────────────────────────────────
