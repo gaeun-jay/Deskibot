@@ -1,0 +1,11 @@
+# 로컬 파이썬 환경 — 커밋하지 않는다 (requirements.txt 로 재생성)
+.venv/
+__pycache__/
+*.pyc
+
+# 접속 정보·시크릿
+.env
+.env.local
+
+# 실행 로그
+*.log

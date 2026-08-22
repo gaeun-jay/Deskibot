@@ -1,24 +1,57 @@
-.DS_Store
-
 # ── 시크릿 ────────────────────────────────────────────────────────────
 # 경로가 아니라 이름으로 막는다. 폴더 구조가 바뀌어도 규칙이 따라간다.
 #
 # 예전에는 `include/secrets.h`, `server/.env` 로 경로가 박혀 있었다.
 # 그 상태로 파일을 옮기면 규칙이 조용히 풀려서, git add -A 한 번에
-# API 키와 DB 비밀번호가 그대로 커밋된다. 실제로 이번 구조 변경에서
-# 그럴 뻔했다.
+# API 키와 DB 비밀번호가 그대로 커밋된다. 실제로 구조 변경에서 그럴 뻔했다.
 secrets.h
 .env
+*.env
 # .env.example 은 이 규칙에 걸리지 않는다 (템플릿이라 커밋 대상).
 
-# 서비스 계정 키. 이번 재구성에서 server/*.json 규칙이 경로째 풀리면서
-# Firebase adminsdk 키가 추적 대상으로 노출됐다. 이름으로 막아 재발을 막는다.
+# 서비스 계정 키. server/*.json 처럼 경로로 막으면 재구성 때 풀린다.
 *-adminsdk-*.json
 *service-account*.json
+**/serviceAccountKey.json
+**/google-services.json
+**/GoogleService-Info.plist
+**/firebase_options.dart
 
-# 파이썬 빌드 산출물
+# ── 파이썬 (server/) ──────────────────────────────────────────────────
 __pycache__/
 *.pyc
 
-# 시리얼 캡처 로그
+# ── Flutter / Dart (app/) ─────────────────────────────────────────────
+**/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/*.g.dart
+**/*.freezed.dart
+# pubspec.lock 은 커밋한다. 앱(패키지가 아님)은 팀 전원이 같은 버전으로
+# 빌드해야 하므로 잠금 파일이 저장소에 있어야 한다.
+
+# ── Android ───────────────────────────────────────────────────────────
+**/android/.gradle/
+**/android/local.properties
+**/android/key.properties
+**/android/app/google-services.json
+
+# ── iOS ───────────────────────────────────────────────────────────────
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/GoogleService-Info.plist
+
+# ── 로그 ──────────────────────────────────────────────────────────────
+# 시리얼 캡처 로그 포함
 *.log
+
+# ── IDE ───────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.iml
+
+# ── OS ────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
