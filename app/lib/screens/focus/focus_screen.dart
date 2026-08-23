@@ -30,6 +30,7 @@ class _FocusScreenState extends State<FocusScreen>
   List<Map<String, dynamic>> _todaySessions = [];
   String? _loadedDate;
   Timer? _dateCheckTimer;
+  bool _prevSessionActive = false;
 
   String _todayStr() {
     final now = DateTime.now();
@@ -64,6 +65,7 @@ class _FocusScreenState extends State<FocusScreen>
     setState(() {
       _uid = uid;
       _timerProvider = TimerProvider(service: TimerService(uid: uid));
+      _timerProvider!.addListener(_onTimerChanged);
     });
     await _loadTodaySessions(uid);
   }
@@ -76,7 +78,9 @@ class _FocusScreenState extends State<FocusScreen>
     final completed = (res['sessions'] as List)
         .map((e) => Map<String, dynamic>.from(e as Map))
         .where((s) =>
-            s['status'] == 'completed' || s['status'] == 'incomplete')
+            s['status'] == 'completed' ||
+            s['status'] == 'incomplete' ||
+            s['status'] == 'interrupted')
         .toList();
     if (!mounted) return;
     setState(() {
@@ -85,8 +89,26 @@ class _FocusScreenState extends State<FocusScreen>
     });
   }
 
+  // 세션이 종료될 때 오늘 집중세션 목록을 즉시 갱신한다.
+  void _onTimerChanged() {
+    if (_timerProvider == null || _uid == null) return;
+    final p = _timerProvider!;
+    final isActive =
+        p.pomodoro.status == TimerStatus.running ||
+        p.pomodoro.status == TimerStatus.paused ||
+        p.stopwatch.status == TimerStatus.running ||
+        p.stopwatch.status == TimerStatus.paused;
+    if (_prevSessionActive && !isActive) {
+      Future.delayed(const Duration(seconds: 2), () {
+        if (_uid != null) _loadTodaySessions(_uid!);
+      });
+    }
+    _prevSessionActive = isActive;
+  }
+
   @override
   void dispose() {
+    _timerProvider?.removeListener(_onTimerChanged);
     _dateCheckTimer?.cancel();
     _tabController.dispose();
     _timerProvider?.dispose();
