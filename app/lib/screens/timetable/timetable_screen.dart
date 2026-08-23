@@ -109,8 +109,10 @@ class _SessionGroup {
       final totalMin  = (fb.endMinutes - fb.startMinutes).clamp(0, 24 * 60);
       final activeMin = fb.durationMin;
 
-      if (activeMin > 0 && activeMin < totalMin) {
-        // 세션 내부 일시정지 감지 (actual_duration < total_duration)
+      // 뽀모도로는 일시정지가 없으므로 내부 pause 세그먼트를 만들지 않는다.
+      if (activeMin > 0 && activeMin < totalMin &&
+          sorted[0].sessionType != 'pomodoro') {
+        // 세션 내부 일시정지 감지 (actual_duration < total_duration, 스톱워치만)
         // 활성 구간: startMin ~ startMin+activeMin
         // 일시정지:  startMin+activeMin ~ endMin
         final activeEnd = fb.startMinutes + activeMin;
