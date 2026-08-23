@@ -233,11 +233,15 @@ class _FocusScreenState extends State<FocusScreen>
                             onDurationChanged: (v) =>
                                 setState(() => _selectedDuration = v),
                             onEnd: _showEndDialog,
-                            todaySessions: _todaySessions,
+                            todaySessions: _todaySessions
+                                .where((s) => s['type'] == 'pomodoro')
+                                .toList(),
                           ),
                           _StopwatchTab(
                             onSnackbar: _showSnackbar,
-                            todaySessions: _todaySessions,
+                            todaySessions: _todaySessions
+                                .where((s) => s['type'] == 'stopwatch')
+                                .toList(),
                             onSessionEnd: () async {
                               if (_uid != null) await _loadTodaySessions(_uid!);
                             },
@@ -644,7 +648,7 @@ class _SessionItem extends StatelessWidget {
         label = plannedMin > 0 ? '$plannedMin분 완료' : '뽀모도로 완료';
       }
     } else {
-      label = actualSec > 0 ? '스톱워치 ${_fmtDuration(actualSec)}' : '스톱워치 완료';
+      label = actualSec > 0 ? _fmtDuration(actualSec) : '스톱워치 완료';
     }
 
     return Container(
