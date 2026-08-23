@@ -9,6 +9,9 @@ class BottomNavState {
   BottomNavState._();
 
   static final ValueNotifier<int> index = ValueNotifier<int>(0);
+
+  /// 홈 탭의 위치. 아래 [AppBottomNavBar._tabs] 의 순서와 같아야 한다.
+  static const int homeIndex = 0;
 }
 
 class AppBottomNavBar extends StatelessWidget {
