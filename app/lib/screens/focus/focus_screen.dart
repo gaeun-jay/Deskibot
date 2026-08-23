@@ -654,7 +654,7 @@ class _SessionItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final type = session['type'] as String? ?? '';
     final status = session['status'] as String? ?? '';
-    final isIncomplete = status == 'incomplete';
+    final isIncomplete = status == 'incomplete' || status == 'interrupted';
     final plannedMin =
         ((session['planned_duration_sec'] as num?)?.toInt() ?? 0) ~/ 60;
     final actualSec =
