@@ -222,8 +222,32 @@ static volatile bool _new_no_person     = false;
 
 extern AppScreen current_screen;
 
+// pomodoro.h의 진행 상태. 마감 팝업을 보류하는 기준이다.
+// (POMO_* 매크로도 pomodoro.h에 있고, main.cpp가 이 헤더보다 먼저 include 한다)
+extern int _pomo_state;
+
 // ─── todo 마감 알림 확인 (메인 루프에서 30초 간격 호출) ─────────────────────
 void todo_check_deadlines() {
+    // 뽀모도로가 도는 동안에는 마감 팝업을 띄우지 않는다.
+    //
+    // 팝업은 화면 전체를 덮고 알림음까지 울려서 집중이 그대로 끊긴다. 앱도
+    // 같은 규칙이고(NotificationService.suspend), 바로 아래 졸음/폰 감지
+    // 팝업도 current_screen == SCREEN_POMODORO 일 때 hide_alert() 로 막는다.
+    // 마감 알림만 이 규칙에서 빠져 있었다.
+    //
+    // POMO_AWAY 도 포함한다. 자리 비움으로 강제 종료를 기다리는 상태인데
+    // 화면에는 뽀모도로 레이아웃이 회색 스크림만 덮인 채 그대로 남아 있어,
+    // 팝업이 덮으면 진행 중일 때와 똑같은 문제가 된다.
+    //
+    // 여기서 보류한 마감은 버려진다. shown 을 건드리지 않으니 뽀모도로가
+    // 알림 시각 ±2분 창 안에 끝나면 그때 뜨고, 창이 지났으면 사라진다.
+    // 앱 resume() 이 "시각이 지난 건 되살리지 않는다"고 정한 것과 같은
+    // 정책이다. 모아뒀다 몰아서 띄우려면 파일 끝의 대안 블록을 참고.
+    //
+    // millis() 스로틀보다 먼저 빠져나간다 — _last_check_ms 를 소비하지 않아
+    // 뽀모도로가 끝나면 30초를 더 기다리지 않고 다음 루프에서 바로 본다.
+    if (_pomo_state == POMO_RUNNING || _pomo_state == POMO_AWAY) return;
+
     static uint32_t _last_check_ms = 0;
     if (millis() - _last_check_ms < 30000) return;
     _last_check_ms = millis();
@@ -264,6 +288,74 @@ void todo_check_deadlines() {
         break;  // 한 번에 하나씩
     }
 }
+
+// ─── [대안] 뽀모도로 중 지나간 마감을 끝난 뒤 몰아서 띄우기 ──────────────────
+//
+// 현재는 보류한 마감을 버린다. 그게 아니라 뽀모도로가 끝날 때 밀린 것을
+// 몰아서 보여주고 싶으면, 위 todo_check_deadlines() 맨 앞의
+//
+//     if (_pomo_state == POMO_RUNNING || _pomo_state == POMO_AWAY) return;
+//
+// 를 지우고 아래 세 조각을 살린다. 호출부(main.cpp)는 건드릴 필요가 없다 —
+// 뽀모도로 종료를 이 함수 안에서 직접 감지한다.
+//
+// ── 1) 구조체에 필드 추가 (파일 위쪽 struct NotifyTodo) ──
+//
+//     bool deferred;   // 뽀모도로 때문에 밀린 알림
+//
+//    todo_fetch_tasks() 의 shown 보존 로직에도 같이 얹어야 페치가 돌 때마다
+//    밀린 표시가 날아가지 않는다. was_shown 옆에 was_deferred 를 두고
+//    _notify_todos[...].deferred = was_deferred; 로 이어 준다.
+//
+// ── 2) todo_check_deadlines() 안, show_deadline(...) 자리를 갈음 ──
+//
+//     const bool pomodoro_active =
+//         (_pomo_state == POMO_RUNNING || _pomo_state == POMO_AWAY);
+//
+//     if (pomodoro_active) {
+//         // 띄우지 않고 밀어둔다. shown 을 함께 세워야 ±2분 창을 벗어난
+//         // 뒤에도 이 항목이 계속 후보로 남지 않는다.
+//         _notify_todos[i].deferred = true;
+//         _notify_todos[i].shown    = true;
+//         Serial.printf("[Deadline] 뽀모도로 중 보류: '%s'\n",
+//                       _notify_todos[i].content);
+//     } else {
+//         show_deadline(time_str, _notify_todos[i].content, left_str);
+//         _notify_todos[i].shown = true;
+//     }
+//
+//    이때 함수 맨 앞의 스로틀·NTP 검사는 그대로 둔다. 보류하려면 루프가
+//    끝까지 돌아 "지금이 알림 시각인지" 를 판정해야 하기 때문이다.
+//
+// ── 3) 뽀모도로 종료 감지 + 밀린 것 방출 ──
+//    todo_check_deadlines() 본문 맨 앞(스로틀 검사 뒤)에 넣는다.
+//
+//     static bool _prev_pomo_active = false;
+//     const bool pomo_now =
+//         (_pomo_state == POMO_RUNNING || _pomo_state == POMO_AWAY);
+//     if (_prev_pomo_active && !pomo_now) {
+//         // 방금 끝났다. 밀린 것을 하나 꺼내 띄운다.
+//         for (int i = 0; i < _notify_todo_count; i++) {
+//             if (!_notify_todos[i].deferred) continue;
+//             _notify_todos[i].deferred = false;
+//
+//             // 남은 시간은 지금 기준으로 다시 계산한다 — 보류하는 사이
+//             // 마감이 지났을 수 있다(그 경우 "지금!" 으로 표시된다).
+//             int dl_h = 0, dl_m = 0;
+//             sscanf(_notify_todos[i].deadline_time, "%d:%d", &dl_h, &dl_m);
+//             /* ... 위 루프와 같은 방식으로 left_str / time_str 구성 ... */
+//             show_deadline(time_str, _notify_todos[i].content, left_str);
+//             break;   // 아래 주의 참고
+//         }
+//     }
+//     _prev_pomo_active = pomo_now;
+//
+// ── 주의: "몰아서" 가 한 번에 다 뜬다는 뜻은 아니다 ──
+//    show_deadline() 은 오버레이가 이미 있으면 hide_deadline() 으로 지우고
+//    새로 그린다(popup.h). 밀린 3건을 연달아 부르면 마지막 하나만 남는다.
+//    그래서 위 코드는 break 로 한 건씩만 꺼내고, 나머지는 30초 뒤 다음
+//    틱에서 이어 뜬다. 진짜로 한 화면에 모아 보여주려면 popup.h 에
+//    목록형 팝업(예: show_deadline_digest(count, ...))을 새로 만들어야 한다.
 
 // ─── 할 일/알림 초기화 ───────────────────────────────────────────────────────
 void todo_alert_init() {
