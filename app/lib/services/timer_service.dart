@@ -19,6 +19,7 @@
 
 import 'dart:async';
 import '../models/timer_state.dart';
+import 'api_client.dart';
 import 'focus_websocket_service.dart';
 
 class TimerService {
@@ -271,5 +272,21 @@ class TimerService {
   // 앱 재시작 복구 — WebSocket 연결 시 서버가 자동으로 현재 세션 전송
   // ══════════════════════════════════════════════════════════
   Future<void> recoverUnsavedSession() async {}
+
+  // ══════════════════════════════════════════════════════════
+  // 백그라운드 중 누락된 감지 이벤트 서버에서 조회
+  // returns: {'drowsy': {'count': N, 'latest_at': '...', 'latest_duration_sec': N},
+  //           'phone':  {'count': N, 'latest_at': '...', 'latest_duration_sec': N}}
+  // ══════════════════════════════════════════════════════════
+  Future<Map<String, dynamic>?> fetchSessionEvents(String sessionId) async {
+    if (sessionId.isEmpty) return null;
+    try {
+      final res = await ApiClient().get('/api/focus-sessions/$sessionId');
+      if (res is Map<String, dynamic>) return res;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
 
 }

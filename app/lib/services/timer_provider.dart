@@ -351,6 +351,75 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
         _backgroundEnteredAt = null;
       }
       _restartTickerIfNeeded();
+      // 백그라운드 중 누락된 감지 이벤트 서버에서 동기화
+      _syncDetectionEventsFromServer();
+    }
+  }
+
+  // 화면이 꺼진 동안 서버에 쌓인 감지 이벤트를 조회해 로컬에 반영
+  Future<void> _syncDetectionEventsFromServer() async {
+    // 뽀모도로 실행 중일 때만 동기화 (스톱워치는 감지 이벤트 미사용)
+    if (_pomodoro.status != TimerStatus.running &&
+        _pomodoro.status != TimerStatus.paused) return;
+    if (_pomodoro.sessionId.isEmpty) return;
+
+    final data = await _service.fetchSessionEvents(_pomodoro.sessionId);
+    if (data == null) return;
+
+    final drowsy = data['drowsy'] as Map?;
+    final phone = data['phone'] as Map?;
+    final serverDrowsyCount = (drowsy?['count'] as num?)?.toInt() ?? 0;
+    final serverPhoneCount = (phone?['count'] as num?)?.toInt() ?? 0;
+
+    final now = DateTime.now();
+    final dateStr =
+        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final timeStr =
+        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+
+    var updatedPomodoro = _pomodoro;
+
+    // 졸음: 서버 누적 count 가 로컬보다 많으면 차이만큼 이벤트 추가
+    if (serverDrowsyCount > _pomodoro.drowsyEvents.length) {
+      final missing = serverDrowsyCount - _pomodoro.drowsyEvents.length;
+      final latestAt = drowsy?['latest_at'] as String? ?? timeStr;
+      final latestDurationSec =
+          (drowsy?['latest_duration_sec'] as num?)?.toInt() ?? 0;
+      final events = List<DrowsyEvent>.from(_pomodoro.drowsyEvents);
+      for (int i = 0; i < missing; i++) {
+        events.add(DrowsyEvent(
+          startDate: dateStr,
+          startTime: latestAt,
+          endDate: dateStr,
+          endTime: latestAt,
+          totalDuration: latestDurationSec ~/ 60,
+        ));
+      }
+      updatedPomodoro = updatedPomodoro.copyWith(drowsyEvents: events);
+    }
+
+    // 폰: 서버 누적 count 가 로컬보다 많으면 차이만큼 이벤트 추가
+    if (serverPhoneCount > _pomodoro.phoneEvents.length) {
+      final missing = serverPhoneCount - _pomodoro.phoneEvents.length;
+      final latestAt = phone?['latest_at'] as String? ?? timeStr;
+      final latestDurationSec =
+          (phone?['latest_duration_sec'] as num?)?.toInt() ?? 0;
+      final events = List<PhoneEvent>.from(_pomodoro.phoneEvents);
+      for (int i = 0; i < missing; i++) {
+        events.add(PhoneEvent(
+          startDate: dateStr,
+          startTime: latestAt,
+          endDate: dateStr,
+          endTime: latestAt,
+          totalDuration: latestDurationSec ~/ 60,
+        ));
+      }
+      updatedPomodoro = updatedPomodoro.copyWith(phoneEvents: events);
+    }
+
+    if (updatedPomodoro != _pomodoro) {
+      _pomodoro = updatedPomodoro;
+      notifyListeners();
     }
   }
 
