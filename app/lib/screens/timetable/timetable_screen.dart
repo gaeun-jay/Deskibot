@@ -1,10 +1,12 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:async';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:math' show min, max;
 import 'package:deskibot/models/todo_model.dart';
 import 'package:deskibot/models/focus_block_model.dart';
 import 'package:deskibot/models/user_model.dart';
 import 'package:deskibot/services/timetable_service.dart';
+import 'package:deskibot/services/focus_session_service.dart';
 import 'package:deskibot/theme/app_styles.dart';
 
 // ── 색상 ─────────────────────────────────────────────────────────────
@@ -275,6 +277,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
   Map<String, Category> _categories = {};
   bool _isLoading  = true;
   bool _wasVisible = false;
+  StreamSubscription? _sessionSub;
 
   // 캐싱된 세션 그룹
   List<_SessionGroup> _pomoGroups = [];
@@ -296,10 +299,15 @@ class _TimetableScreenState extends State<TimetableScreen> {
       statusBarIconBrightness: Brightness.light,
     ));
     _loadData();
+    // 세션 종료 시 타임테이블 자동 갱신
+    _sessionSub = FocusSessionService().getTodaySessions().listen((_) {
+      if (_selectedDate.day == DateTime.now().day) _loadData();
+    });
   }
 
   @override
   void dispose() {
+    _sessionSub?.cancel();
     _nameCtrl.dispose();
     SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -507,11 +515,25 @@ class _TimetableScreenState extends State<TimetableScreen> {
                           padding: EdgeInsets.zero,
                           visualDensity: VisualDensity.compact,
                         ),
-                        Text(_dateLabel,
-                            style: const TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xFF1E1E1E))),
+                        GestureDetector(
+                          onTap: () async {
+                            final picked = await showDatePicker(
+                              context: context,
+                              initialDate: _selectedDate,
+                              firstDate: DateTime(2024),
+                              lastDate: DateTime.now(),
+                            );
+                            if (picked != null) {
+                              setState(() => _selectedDate = picked);
+                              _loadData();
+                            }
+                          },
+                          child: Text(_dateLabel,
+                              style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF1E1E1E))),
+                        ),
                         IconButton(
                           icon: const Icon(Icons.chevron_right, size: 22),
                           onPressed: () {
