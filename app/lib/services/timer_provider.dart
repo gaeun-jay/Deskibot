@@ -355,8 +355,17 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _applyBackgroundGap(int gapSec) {
+    final now = DateTime.now();
+
     if (_pomodoro.status == TimerStatus.running) {
-      final remaining = _pomodoro.remainingSec - gapSec;
+      // startedAt 기준으로 재계산 → 정수 절삭 오차 누적 방지
+      final int remaining;
+      if (_pomodoro.startedAt != null) {
+        final elapsed = now.difference(_pomodoro.startedAt!).inSeconds;
+        remaining = (_pomodoro.durationMin * 60 - elapsed).clamp(0, _pomodoro.durationMin * 60);
+      } else {
+        remaining = _pomodoro.remainingSec - gapSec;
+      }
       if (remaining <= 0) {
         _finishPomodoro();
       } else {
@@ -364,9 +373,18 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     if (_stopwatch.status == TimerStatus.running) {
-      _stopwatch = _stopwatch.copyWith(
-        elapsedSec: _stopwatch.elapsedSec + gapSec,
-      );
+      // startedAt 기준으로 재계산 (totalPauseDuration 반영)
+      if (_stopwatch.startedAt != null) {
+        final elapsed = now.difference(_stopwatch.startedAt!).inSeconds
+            - (_stopwatch.totalPauseMs ~/ 1000);
+        _stopwatch = _stopwatch.copyWith(
+          elapsedSec: elapsed.clamp(0, double.infinity.toInt()),
+        );
+      } else {
+        _stopwatch = _stopwatch.copyWith(
+          elapsedSec: _stopwatch.elapsedSec + gapSec,
+        );
+      }
     }
     notifyListeners();
   }
