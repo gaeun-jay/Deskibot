@@ -267,6 +267,33 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
         _startTicker();
       }
 
+      // ── 재연결 스냅샷으로 스톱워치 상태 바로잡기 ──
+      //
+      // 재연결할 때 서버가 보내는 스냅샷에는 action 이 없다. 그래서 실행 중인
+      // 세션이 'resume' 이 아니라 'start' 로 온다. 그런데 위의 start 분기는
+      // idle 일 때만 처리하므로, 앱이 paused 로 멈춰 있으면 이 스냅샷이
+      // 통째로 무시되고 영영 멈춘 채로 남는다.
+      //
+      // 화면을 끈 사이 로봇이 일시정지를 풀면 앱은 그 브로드캐스트를 놓치고,
+      // 재연결 스냅샷이 유일한 복구 경로다. end 쪽과 같은 문제였다.
+      //
+      // 경과 시간은 로컬 값을 이어 쓰지 않고 서버의 started_at·총 정지시간으로
+      // 다시 계산한다. 놓친 구간이 얼마인지 앱은 알 수 없기 때문이다.
+      if (state == 'start' &&
+          type == 'stopwatch' &&
+          _stopwatch.status == TimerStatus.paused &&
+          sessionId.isNotEmpty &&
+          sessionId == _stopwatch.sessionId) {
+        _stopwatch = _stopwatch.copyWith(
+          status: TimerStatus.running,
+          elapsedSec: elapsedSec,
+          totalPauseMs: totalPauseSec * 1000,
+          clearPausedAt: true,
+        );
+        WakelockPlus.enable();
+        _startTicker();
+      }
+
       // ── ESP32/자리이탈로 세션 종료한 경우 ──
       // session == null → sessionId 빈 문자열 (초기화 신호)
       // session 있음  → sessionId 가 현재 진행 중인 세션과 일치할 때만 종료
