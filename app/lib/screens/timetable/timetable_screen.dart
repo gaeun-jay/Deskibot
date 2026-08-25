@@ -16,6 +16,8 @@ const _kPomoText   = Color(0xFF1A4B8A);
 const _kStopAccent = Color(0xFF4DA3FF);
 const _kStopBlock  = Color(0xFFEDF5FF);
 const _kStopText   = Color(0xFF1565C0);
+// 자리 비움으로 강제 종료된 세션. 파랑 계열 사이에서 바로 눈에 띄도록 주황.
+const _kInterruptAccent = Color(0xFFE8833A);
 const _kPauseBg    = Color(0xFFE8EEF8);
 const _kTrackBg    = Color(0xFFF9FAFE);
 const _kTrackBdr   = Color(0xFFE8EEF8);
@@ -828,11 +830,22 @@ class _TimetableScreenState extends State<TimetableScreen> {
                             - mapper.minutesToY(seg.startMin);
             final segTop = (segNatTop * scale).clamp(0.0, bH);
             final segH   = (segNatH  * scale).clamp(2.0, bH - segTop);
+            // 세그먼트마다 따로 칠한다. 9분 이내 세션은 한 블록으로 병합되므로
+            // 정상 종료와 자리 비움 종료가 같은 블록에 섞일 수 있다.
+            final segColor = seg.session?.isInterrupted == true
+                ? _kInterruptAccent
+                : accent;
             return Positioned(
               top: segTop, left: 0, right: 0, height: segH,
-              child: ColoredBox(color: accent),
+              child: ColoredBox(color: segColor),
             );
           }).toList();
+
+      // 일시정지가 없어 블록을 한 색으로 칠하는 경우의 색.
+      // 이 경로는 세그먼트가 사실상 하나라, 그 세션의 상태를 그대로 따른다.
+      final solidColor = g.sessions.every((s) => s.isInterrupted)
+          ? _kInterruptAccent
+          : accent;
 
       ws.add(Positioned(
         top: bTop, left: 3, right: 3, height: bH,
@@ -846,7 +859,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
                 // ① 배경: 일시정지 없으면 solid, 있으면 연한 accent(pause 영역)
                 ColoredBox(color: hasPause
                     ? accent.withValues(alpha: 0.20)
-                    : accent),
+                    : solidColor),
                 // ② 활성 구간 스트립
                 ...activeStrips,
                 // ③ 이름 배지: HTML 목업의 .block-name-tag 방식
@@ -943,6 +956,8 @@ class _TimetableScreenState extends State<TimetableScreen> {
           _LegendItem(color: _kPomoAccent, label: '뽀모도로'),
           const SizedBox(width: 16),
           _LegendItem(color: _kStopAccent, label: '스톱워치'),
+          const SizedBox(width: 16),
+          _LegendItem(color: _kInterruptAccent, label: '자리비움 종료'),
           const SizedBox(width: 16),
           _LegendItem(
               color: _kPauseBg,
@@ -1195,12 +1210,14 @@ class _TimetableScreenState extends State<TimetableScreen> {
                               ),
                       ),
                       const SizedBox(width: 6),
-                      // 색상 원형 점
+                      // 색상 원형 점 — 자리 비움으로 끊긴 세션은 주황
                       Container(
                           width: 9,
                           height: 9,
                           decoration: BoxDecoration(
-                            color: dotClass,
+                            color: session.isInterrupted
+                                ? _kInterruptAccent
+                                : dotClass,
                             shape: BoxShape.circle,
                           )),
                       const SizedBox(width: 8),
