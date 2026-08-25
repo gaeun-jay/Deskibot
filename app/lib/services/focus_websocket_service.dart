@@ -62,7 +62,19 @@ class FocusWebSocketService {
   static const Duration _pingInterval = Duration(seconds: 20);
   static const Duration _pongTimeout = Duration(seconds: 50); // ping 2회분 + 여유
 
+  // 화면을 켜고 돌아왔을 때 쓰는 짧은 확인 시간.
+  //
+  // 정기 ping 은 20초마다 돌고 50초를 기다려 주지만, 그건 백그라운드에서
+  // 조용히 감시할 때 이야기다. 사용자가 화면을 켜고 앱을 보고 있는 순간에는
+  // 25초를 기다리는 사이 "종료됐는데 타이머가 그대로" 로 보인다.
+  static const Duration _resumeProbeTimeout = Duration(seconds: 3);
+
   DateTime? _lastPongAt;
+
+  // 재연결 대기를 취소할 수 있어야 해서 Future.delayed 대신 Timer 를 쓴다.
+  // 화면 복귀처럼 "지금 당장 붙어야 하는" 순간에 남은 백오프를 건너뛴다.
+  Timer? _reconnectTimer;
+  Timer? _resumeProbeTimer;
 
   /// 모든 서버 메시지를 브로드캐스트하는 스트림
   Stream<Map<String, dynamic>> get stream => _controller.stream;
@@ -157,13 +169,69 @@ class FocusWebSocketService {
 
     debugPrint('[WS] ${(wait.inMilliseconds / 1000).toStringAsFixed(1)}초 후 재연결');
 
-    Future.delayed(wait, () async {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(wait, () async {
       _reconnecting = false;
       // 다음 실패를 대비해 미리 두 배로 늘려둔다 (상한까지).
       final next = _reconnectDelay * 2;
       _reconnectDelay =
           next > _maxReconnectDelay ? _maxReconnectDelay : next;
       await connect();
+    });
+  }
+
+  /// 남은 백오프를 버리고 지금 바로 붙는다.
+  ///
+  /// 백오프는 "서버가 죽어 있을 때 몰려들지 않기" 위한 것이라, 사용자가 앱을
+  /// 보고 있는 순간에는 지킬 이유가 없다.
+  void _reconnectNow() {
+    _reconnectTimer?.cancel();
+    _reconnecting = false;
+    _reconnectDelay = _minReconnectDelay;
+    connect();
+  }
+
+  // ── 화면 복귀 시 즉시 확인 ─────────────────────────────────────────
+
+  /// 앱이 포그라운드로 돌아왔을 때 부른다. 연결이 살아있는지 즉시 확인하고,
+  /// 죽었으면 백오프를 기다리지 않고 곧바로 다시 붙는다.
+  ///
+  /// 이게 없으면 정기 ping 차례(최대 20초)를 기다린 뒤에야 끊김을 알아채고,
+  /// 거기에 백오프까지 더해져 25초 넘게 옛 상태가 화면에 남는다. 로봇이
+  /// 화면 꺼진 사이 세션을 끝낸 경우가 정확히 그랬다 — 서버의 현재 상태는
+  /// 재연결할 때 오는 스냅샷으로만 오기 때문이다.
+  void verifyConnection() {
+    // 이미 끊긴 걸 아는 상태 — 기다릴 것 없이 바로.
+    if (!_authenticated) {
+      debugPrint('[WS] 화면 복귀 — 끊긴 상태라 즉시 재연결');
+      _reconnectNow();
+      return;
+    }
+
+    // 최근까지 응답이 있었으면 살아있는 것으로 본다. 소켓이 살아있다면
+    // 놓친 메시지도 없다(TCP 가 순서대로 전달하고, 복귀 시 처리된다).
+    final last = _lastPongAt;
+    if (last != null &&
+        DateTime.now().difference(last) <= _pingInterval) {
+      return;
+    }
+
+    // 조용했다. 죽었는지 아직 모르니 ping 을 던지고 짧게만 기다려 본다.
+    // 곧바로 끊어버리면 멀쩡한 연결까지 매번 새로 맺게 된다.
+    _send({'type': 'ping'});
+
+    _resumeProbeTimer?.cancel();
+    _resumeProbeTimer = Timer(_resumeProbeTimeout, () {
+      final at = _lastPongAt;
+      final alive = at != null &&
+          DateTime.now().difference(at) <= _resumeProbeTimeout;
+      if (alive) return;
+
+      debugPrint('[WS] 화면 복귀 후 ${_resumeProbeTimeout.inSeconds}초간 응답 없음 '
+          '→ 즉시 재연결');
+      _channel?.sink.close();
+      _onDisconnect();   // 여기서 백오프 예약이 잡히므로
+      _reconnectNow();   // 곧바로 취소하고 지금 붙는다
     });
   }
 
@@ -249,6 +317,9 @@ class FocusWebSocketService {
 
   void disconnect() {
     _pingTimer?.cancel();
+    _reconnectTimer?.cancel();
+    _resumeProbeTimer?.cancel();
+    _reconnecting = false;
     _channel?.sink.close();
     _channel = null;
     _authenticated = false;

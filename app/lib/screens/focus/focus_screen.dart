@@ -255,6 +255,7 @@ class _FocusScreenState extends State<FocusScreen>
                             onDurationChanged: (v) =>
                                 setState(() => _selectedDuration = v),
                             onEnd: _showEndDialog,
+                            onSnackbar: _showSnackbar,
                             todaySessions: _todaySessions
                                 .where((s) => s['type'] == 'pomodoro')
                                 .toList(),
@@ -289,12 +290,14 @@ class _PomodoroTabView extends StatelessWidget {
   final int selectedDuration;
   final ValueChanged<int> onDurationChanged;
   final Future<void> Function(TimerProvider) onEnd;
+  final void Function(String) onSnackbar;
   final List<Map<String, dynamic>> todaySessions;
 
   const _PomodoroTabView({
     required this.selectedDuration,
     required this.onDurationChanged,
     required this.onEnd,
+    required this.onSnackbar,
     required this.todaySessions,
   });
 
@@ -377,9 +380,12 @@ class _PomodoroTabView extends StatelessWidget {
                   filled: true,
                   color: isIdle ? _kMain : Colors.red,
                   onTap: isIdle
-                      ? () => context.read<TimerProvider>().startPomodoro(
-                          selectedDuration,
-                        )
+                      ? () async {
+                          final ok = await context
+                              .read<TimerProvider>()
+                              .startPomodoro(selectedDuration);
+                          if (!ok) onSnackbar('이미 실행 중인 세션이 있습니다.');
+                        }
                       : () => onEnd(context.read<TimerProvider>()),
                 ),
               ],

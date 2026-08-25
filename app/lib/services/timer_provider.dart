@@ -27,7 +27,12 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
   PomodoroState get pomodoro => _pomodoro;
   StopwatchState get stopwatch => _stopwatch;
 
-  bool _pomodoroStartedByApp = false;
+  // 뽀모도로에는 대응되는 플래그가 없다. "누가 시작했나" 로 "누가 끝낼 수
+  // 있나" 를 정하면 로봇이 시작한 세션을 앱에서 못 끝내기 때문이다.
+  // 종료 주체는 _finishPomodoro 의 notifyServer 로 호출부마다 정한다.
+  //
+  // 스톱워치 쪽은 용도가 다르다 — 앱이 보낸 focus_start 가 브로드캐스트로
+  // 되돌아왔을 때 그걸 "로봇이 시작한 세션" 으로 오인하지 않으려는 표식이다.
   bool _stopwatchStartedByApp = false;
   bool get isStopwatchStartedByApp => _stopwatchStartedByApp;
 
@@ -265,17 +270,28 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
       // ── ESP32/자리이탈로 세션 종료한 경우 ──
       // session == null → sessionId 빈 문자열 (초기화 신호)
       // session 있음  → sessionId 가 현재 진행 중인 세션과 일치할 때만 종료
+      //
+      // 어느 쪽이든 서버가 이미 세션을 닫은 뒤다. 여기서 focus_end 를 다시
+      // 보내면 no_active_session / session_mismatch 로 거절당하므로
+      // notifyServer: false 로 로컬 정리만 한다.
       if (state == 'end' &&
           (sessionId.isEmpty ||
            sessionId == _pomodoro.sessionId ||
            sessionId == _stopwatch.sessionId)) {
-        if (type == 'pomodoro' &&
+        // sessionId 가 비어 있으면 "서버에 활성 세션이 없다" 는 뜻이라
+        // 모드를 알 수 없다. type 으로 좁히면 이 신호가 통째로 버려진다 —
+        // 화면을 끈 사이 로봇이 종료하면 앱이 그 브로드캐스트를 놓치고,
+        // 재연결 때 오는 이 스냅샷만이 유일한 복구 경로다.
+        final resetAll = sessionId.isEmpty;
+
+        if ((resetAll || type == 'pomodoro') &&
             _pomodoro.status != TimerStatus.idle &&
             _pomodoro.status != TimerStatus.finished) {
-          _finishPomodoro();
-        } else if (type == 'stopwatch' &&
+          _finishPomodoro(notifyServer: false);
+        }
+        if ((resetAll || type == 'stopwatch') &&
             _stopwatch.status != TimerStatus.idle) {
-          _finishStopwatch();
+          _finishStopwatch(notifyServer: false);
         }
       }
 
@@ -351,6 +367,12 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
         _backgroundEnteredAt = null;
       }
       _restartTickerIfNeeded();
+
+      // 화면이 꺼진 사이 소켓이 조용히 죽었을 수 있다. 정기 ping 차례를
+      // 기다리면 끊김을 알아채는 데만 최대 20초, 백오프까지 더하면 25초가
+      // 넘는다. 그동안 사용자는 이미 끝난 세션의 타이머를 보고 있게 된다.
+      _service.verifyConnection();
+
       // 백그라운드 중 누락된 감지 이벤트 서버에서 동기화
       _syncDetectionEventsFromServer();
     }
@@ -436,6 +458,11 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
         remaining = _pomodoro.remainingSec - gapSec;
       }
       if (remaining <= 0) {
+        // 먼저 0 을 반영하고 종료해야 한다. _finishPomodoro 안에서
+        // endPomodoro 가 remainingSec 으로 완료/미완료를 가르는데,
+        // 여기서 갱신하지 않으면 백그라운드에 들어가던 시점의 낡은 값
+        // (예: 20분 남음) 을 그대로 읽어 정상 완료를 incomplete 로 기록한다.
+        _pomodoro = _pomodoro.copyWith(remainingSec: 0);
         _finishPomodoro();
       } else {
         _pomodoro = _pomodoro.copyWith(remainingSec: remaining);
@@ -497,10 +524,19 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
   // ══════════════════════════════════════════════════════════
   // POMODORO 컨트롤
   // ══════════════════════════════════════════════════════════
-  Future<void> startPomodoro(int durationMin) async {
-    _pomodoroStartedByApp = true;
+  /// 앱에서 뽀모도로 시작. 서버가 거부하면 false 를 준다.
+  ///
+  /// 서버는 사용자당 진행 중인 세션을 하나만 허용한다. 이미 하나가 열려
+  /// 있으면 active_session_exists 로 거절하는데, 예전에는 그 실패를 무시하고
+  /// 화면에서만 카운트다운을 시작했다. 서버가 모르는 "유령 타이머" 라서
+  /// 끝나도 기록이 남지 않는다.
+  ///
+  /// 실패해도 [_pomodoro] 는 건드리지 않는다. 거절 사유가 대개 "다른 세션이
+  /// 이미 돌고 있다" 이고, 그 세션이 이미 [_pomodoro] 에 복원돼 있을 수 있다.
+  Future<bool> startPomodoro(int durationMin) async {
     final now = DateTime.now();
     final sessionId = await _service.startPomodoro(durationMin);
+    if (sessionId.isEmpty) return false;
 
     _pomodoro = PomodoroState(
       durationMin: durationMin,
@@ -516,29 +552,40 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
     WakelockPlus.enable();
     _startTicker();
     notifyListeners();
+    return true;
   }
 
   /// 수동 종료 (팝업 확인 후 호출)
+  ///
+  /// 사용자가 직접 누른 종료이므로 누가 시작한 세션이든 서버에 알린다.
+  /// 로봇이 시작한 세션도 여기서 끝나야 로봇 화면까지 같이 멈춘다 —
+  /// 서버가 focus_end 를 로봇에도 브로드캐스트하기 때문이다.
   Future<void> forceEndPomodoro() async {
     _ticker?.cancel();
     _stopAlarm();
-    if (_pomodoroStartedByApp) {
-      await _service.endPomodoro(_pomodoro, isForced: true);
-    }
-    _pomodoroStartedByApp = false;
+    await _service.endPomodoro(_pomodoro, isForced: true);
     _pomodoro = const PomodoroState();
     WakelockPlus.disable();
     notifyListeners();
   }
 
   /// 타이머 완료 or ESP32 종료
-  void _finishPomodoro() {
+  ///
+  /// [notifyServer] 는 이 종료를 서버에 알릴지 정한다.
+  ///   true  — 앱의 타이머가 만료돼 앱이 종료의 주체인 경우
+  ///   false — 서버가 이미 닫은 세션을 뒤따라 정리하는 경우
+  ///           (end 브로드캐스트 수신, 재연결 스냅샷)
+  ///
+  /// 예전에는 `_pomodoroStartedByApp` 로 이걸 갈음했지만, 그 플래그는
+  /// "누가 시작했나" 이지 "누가 끝냈나" 가 아니다. 그래서 로봇이 시작한
+  /// 세션을 앱에서 종료할 수 없었고, 앱을 재시작하면 자기가 시작한 세션도
+  /// 끝내지 못해 서버에 in_progress 로 남았다.
+  void _finishPomodoro({bool notifyServer = true}) {
     _ticker?.cancel();
     _stopAlarm();
-    if (_pomodoroStartedByApp) {
+    if (notifyServer) {
       _service.endPomodoro(_pomodoro, isForced: false);
     }
-    _pomodoroStartedByApp = false;
     _pomodoro = _pomodoro.copyWith(
       remainingSec: 0,
       status: TimerStatus.finished,
@@ -653,9 +700,15 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// ESP32가 스톱워치 종료한 경우
-  void _finishStopwatch() {
+  ///
+  /// [notifyServer] 의 의미는 [_finishPomodoro] 와 같다. 이쪽은 예전에도
+  /// 무조건 focus_end 를 보내고 있어서, 서버가 이미 끝낸 세션에 한 번 더
+  /// 보내고 거절당하는 왕복이 매번 있었다.
+  void _finishStopwatch({bool notifyServer = true}) {
     _ticker?.cancel();
-    _service.endStopwatch(_stopwatch);
+    if (notifyServer) {
+      _service.endStopwatch(_stopwatch);
+    }
     _stopwatch = const StopwatchState();
     _stopwatchStartedByApp = false;
     WakelockPlus.disable();
@@ -700,6 +753,24 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
     _ticker?.cancel();
     _currentStateSub?.cancel();
     _stopAlarm();
+
+    // 뽀모도로가 열려 있는 채로 이 객체가 사라지면 알림 보류를 되돌린다.
+    //
+    // suspend() 가 세우는 _suspended 는 싱글턴 NotificationService 에 있고,
+    // 이 객체가 죽어도 남는다. 그러면 sync() 가 계속 early return 해서
+    // 프로세스가 살아 있는 내내 마감 알림이 단 하나도 예약되지 않는다.
+    // 로그아웃 → 재로그인처럼 프로세스는 그대로인데 화면만 헐리는 경로에서
+    // 실제로 일어난다. resume() 은 !_suspended 면 바로 돌아오므로 안전하다.
+    //
+    // notifyListeners() 는 부르지 않는다 — dispose 이후 호출은 예외다.
+    // 여기서는 _syncFocusSideEffects 를 거치지 않고 직접 되돌린다.
+    if (_pomodoroActive) {
+      _pomodoroActive = false;
+      NotificationService.instance.resume().catchError(
+            (e) => debugPrint('[알림] dispose 복구 실패: $e'),
+          );
+    }
+
     WidgetsBinding.instance.removeObserver(this);
     WakelockPlus.disable();
     super.dispose();
