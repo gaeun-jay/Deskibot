@@ -178,6 +178,10 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
             !_stopwatchStartedByApp) {
           _stopwatch = StopwatchState(
             elapsedSec: elapsedSec,
+            // 서버의 누적 정지시간을 반드시 함께 받아둔다. 이걸 0으로 두면
+            // 화면 복귀 시 _applyBackgroundGap 이 정지시간을 빼지 않고
+            // 계산해 앱이 로봇보다 앞서간다.
+            totalPauseMs: totalPauseSec * 1000,
             status: TimerStatus.running,
             startedAt: sessionStartedAt,
             sessionId: sessionId,
@@ -212,6 +216,7 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
                 .toInt();
         _stopwatch = StopwatchState(
           elapsedSec: elapsedBeforePause,
+          totalPauseMs: totalPauseSec * 1000,   // 위와 같은 이유
           status: TimerStatus.paused,
           pausedAt: pausedAt,
           startedAt: sessionStartedAt,
@@ -292,6 +297,49 @@ class TimerProvider extends ChangeNotifier with WidgetsBindingObserver {
         );
         WakelockPlus.enable();
         _startTicker();
+      }
+
+      // ── 스톱워치 경과 시간을 서버 기준으로 보정 ──
+      //
+      // 총 정지시간(totalPauseMs)은 화면이 꺼진 동안의 경과 시간을 다시 계산할
+      // 때 쓰인다(_applyBackgroundGap). 그런데 로봇이 시작한 세션을 받아올 때
+      // 이 값을 채우는 곳이 없어 0으로 남았고, 그러면 복귀 시
+      //     경과 = 지금 - 시작시각 - 0
+      // 이 되어 그동안의 일시정지가 전혀 빠지지 않는다. 앱이 로봇보다 정지한
+      // 시간만큼 앞서가는 이유였다.
+      //
+      // 앱이 자체 추정으로 누적하는 경로(로봇 재개 브로드캐스트 수신)도 있는데,
+      // 브로드캐스트를 놓치면 그만큼 어긋난다. 서버가 유일한 진실이므로 세션
+      // 상태가 올 때마다 서버 값을 그대로 받아들인다.
+      if (type == 'stopwatch' &&
+          state != 'end' &&
+          sessionId.isNotEmpty &&
+          sessionId == _stopwatch.sessionId &&
+          _stopwatch.status != TimerStatus.idle) {
+        // 실행 중이면 지금까지, 일시정지 중이면 멈춘 시각까지가 경과 시간이다.
+        // 후자는 now 로 계산하면 멈춘 뒤로도 계속 흐르는 값이 나온다.
+        final int serverElapsed;
+        if (_stopwatch.status == TimerStatus.paused) {
+          final pausedAtStr = data['paused_at'] as String?;
+          final pausedAt = pausedAtStr != null && pausedAtStr.isNotEmpty
+              ? DateTime.tryParse(pausedAtStr) ?? now
+              : (_stopwatch.pausedAt ?? now);
+          serverElapsed =
+              (pausedAt.difference(sessionStartedAt).inSeconds - totalPauseSec)
+                  .clamp(0, double.infinity)
+                  .toInt();
+        } else {
+          serverElapsed = elapsedSec;
+        }
+
+        final serverPauseMs = totalPauseSec * 1000;
+        if (_stopwatch.elapsedSec != serverElapsed ||
+            _stopwatch.totalPauseMs != serverPauseMs) {
+          _stopwatch = _stopwatch.copyWith(
+            elapsedSec: serverElapsed,
+            totalPauseMs: serverPauseMs,
+          );
+        }
       }
 
       // ── ESP32/자리이탈로 세션 종료한 경우 ──
