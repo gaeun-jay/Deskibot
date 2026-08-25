@@ -9,6 +9,13 @@ class FocusBlock {
   final String label; // 사용자가 수정 가능한 제목 (기본: '뽀모도로'/'스톱워치')
   final int durationMin;
 
+  /// 서버의 세션 종료 상태. 'completed' | 'incomplete' | 'interrupted'
+  ///
+  /// interrupted 는 자리 비움이 감지돼 시스템이 강제로 끊은 세션이다.
+  /// 그때까지 실제로 집중한 시간은 그대로 남으므로 타임테이블에도 그리되,
+  /// 정상 종료와 구분되게 다른 색으로 표시한다.
+  final String status;
+
   const FocusBlock({
     required this.id,
     required this.date,
@@ -17,7 +24,10 @@ class FocusBlock {
     required this.sessionType,
     required this.label,
     required this.durationMin,
+    this.status = 'completed',
   });
+
+  bool get isInterrupted => status == 'interrupted';
 
   int get startMinutes => _toMinutes(startTime);
   int get endMinutes => _toMinutes(endTime);
