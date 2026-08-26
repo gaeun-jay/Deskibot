@@ -23,6 +23,7 @@ class _CumulativeAnalysisScreenState extends State<CumulativeAnalysisScreen> {
 
   String? _loadedDate;
   Timer? _dateCheckTimer;
+  bool _wasVisible = false;
 
   String _todayStr() {
     final now = DateTime.now();
@@ -47,6 +48,18 @@ class _CumulativeAnalysisScreenState extends State<CumulativeAnalysisScreen> {
   void dispose() {
     _dateCheckTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 하단 탭은 IndexedStack 이라 화면이 살아있는 채로 가려질 뿐이고,
+    // 다시 눌러도 initState 가 돌지 않는다. 집중 화면에서 세션을 끝내고
+    // 이 탭으로 오면 종료 전 수치가 그대로 보이므로, 다시 보이는 순간을
+    // 잡아서 통계를 새로 불러온다. (데일리로그 화면과 같은 방식)
+    final visible = TickerMode.valuesOf(context).enabled;
+    if (visible && !_wasVisible) _loadStats();
+    _wasVisible = visible;
   }
 
   Future<void> _loadStats() async {
