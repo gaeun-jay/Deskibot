@@ -1221,37 +1221,69 @@ class _TimetableScreenState extends State<TimetableScreen> {
                             shape: BoxShape.circle,
                           )),
                       const SizedBox(width: 8),
-                      // 이름
-                      Expanded(
+                      // 이름 — 자리 비움으로 끊긴 세션은 주황
+                      Flexible(
                         child: Text(
                           rowLabel,
-                          style: const TextStyle(
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w500,
-                              color: Color(0xFF1E1E1E)),
+                              color: session.isInterrupted
+                                  ? _kInterruptAccent
+                                  : const Color(0xFF1E1E1E)),
                         ),
                       ),
+                      // 미완료 배지.
+                      // 블록이 9분 이내로 병합되면 목록에서 어느 세션이 자리
+                      // 비움으로 끊긴 건지 알아볼 방법이 없어 글자로 남긴다.
+                      if (session.isInterrupted) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: _kInterruptAccent.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            '미완료',
+                            style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                color: _kInterruptAccent),
+                          ),
+                        ),
+                      ],
+                      const Spacer(),
                       // 시작 시간 (12시간 형식)
                       Text(_minTo12H(seg.startMin),
                           style: const TextStyle(
                               fontSize: 11, color: Color(0xFF8E8E93))),
                       const SizedBox(width: 8),
-                      // 소요 시간 pill
+                      // 소요 시간 pill — 자리 비움 세션은 주황 계열로
                       Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFF0F4FF),
+                          color: session.isInterrupted
+                              ? _kInterruptAccent.withValues(alpha: 0.10)
+                              : const Color(0xFFF0F4FF),
                           borderRadius: BorderRadius.circular(6),
                           border: Border.all(
-                              color: const Color(0xFFDCE8FF), width: 0.5),
+                              color: session.isInterrupted
+                                  ? _kInterruptAccent.withValues(alpha: 0.35)
+                                  : const Color(0xFFDCE8FF),
+                              width: 0.5),
                         ),
                         child: Text(
                           _fmtDuration(seg.durationMin),
-                          style: const TextStyle(
+                          style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w500,
-                              color: Color(0xFF6E8EC4)),
+                              color: session.isInterrupted
+                                  ? _kInterruptAccent
+                                  : const Color(0xFF6E8EC4)),
                         ),
                       ),
                     ],
