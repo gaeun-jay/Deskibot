@@ -38,6 +38,7 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
   StreamSubscription<List<TodoModel>>? _todoSub;
   StreamSubscription<Map<String, dynamic>>? _wsSub;
   Timer? _dateCheckTimer;
+  bool _wasVisible = false;
 
   // 공부일지 탭 전용. "분석" 탭(오늘 실시간)과 달리 전날(어제) 하루치 스냅샷이다.
   DailyModel? _journalData;
@@ -106,6 +107,18 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
     _wsSub?.cancel();
     _dateCheckTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 하단 탭은 IndexedStack 이라 화면이 살아있는 채로 가려질 뿐이고,
+    // 다시 눌러도 initState 가 돌지 않는다. 집중 화면에서 세션을 끝내고
+    // 이 탭으로 오면 종료 전 수치가 그대로 보이므로, 다시 보이는 순간을
+    // 잡아서 전부 새로 불러온다. (데일리로그 화면과 같은 방식)
+    final visible = TickerMode.valuesOf(context).enabled;
+    if (visible && !_wasVisible) _loadDailyData();
+    _wasVisible = visible;
   }
 
   /// 스트림에 흐른 목록이 오늘 것이 아닐 때, 오늘 것만 따로 불러와 수치를 맞춘다.
