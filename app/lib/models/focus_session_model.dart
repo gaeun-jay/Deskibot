@@ -31,11 +31,11 @@ class FocusSessionModel {
   final int drowsyEventCount;
   final int drowsyDuration;
   final String? latestDrowsyTime;
-  final int latestDrowsyDuration;
+  final int latestDrowsyDurationSec;
   final int phoneEventCount;
   final int phoneDuration;
   final String? latestPhoneTime;
-  final int latestPhoneDuration;
+  final int latestPhoneDurationSec;
 
   const FocusSessionModel({
     required this.id,
@@ -46,11 +46,11 @@ class FocusSessionModel {
     required this.drowsyEventCount,
     required this.drowsyDuration,
     this.latestDrowsyTime,
-    this.latestDrowsyDuration = 0,
+    this.latestDrowsyDurationSec = 0,
     required this.phoneEventCount,
     required this.phoneDuration,
     this.latestPhoneTime,
-    this.latestPhoneDuration = 0,
+    this.latestPhoneDurationSec = 0,
   });
 
   factory FocusSessionModel.fromMap(String id, Map<String, dynamic> map) {
@@ -65,11 +65,11 @@ class FocusSessionModel {
       drowsyEventCount: drowsyEvents?.length ?? 0,
       drowsyDuration: _sumEventDurations(drowsyEvents),
       latestDrowsyTime: _latestEvent(drowsyEvents)?.time,
-      latestDrowsyDuration: _latestEvent(drowsyEvents)?.duration ?? 0,
+      latestDrowsyDurationSec: _latestEvent(drowsyEvents)?.duration ?? 0,
       phoneEventCount: phoneEvents?.length ?? 0,
       phoneDuration: _sumEventDurations(phoneEvents),
       latestPhoneTime: _latestEvent(phoneEvents)?.time,
-      latestPhoneDuration: _latestEvent(phoneEvents)?.duration ?? 0,
+      latestPhoneDurationSec: _latestEvent(phoneEvents)?.duration ?? 0,
     );
   }
 }

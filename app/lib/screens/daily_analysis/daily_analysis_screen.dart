@@ -31,9 +31,9 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
   String? _journalTitle;
   String? _journalSubtitle;
   String? _latestDrowsyTime;
-  int _latestDrowsyDuration = 0;
+  int _latestDrowsyDurationSec = 0;
   String? _latestPhoneTime;
-  int _latestPhoneDuration = 0;
+  int _latestPhoneDurationSec = 0;
   late String _today;
   StreamSubscription<List<TodoModel>>? _todoSub;
   StreamSubscription<Map<String, dynamic>>? _wsSub;
@@ -148,6 +148,13 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
     return int.parse(parts[0]) * 60 + int.parse(parts[1]);
   }
 
+  String _formatDurationSec(int seconds) {
+    if (seconds < 60) return '$seconds초';
+    final minutes = seconds ~/ 60;
+    final remainSec = seconds % 60;
+    return remainSec == 0 ? '$minutes분' : '$minutes분 $remainSec초';
+  }
+
   Future<void> _loadDailyData() async {
     await _refreshJournal();
     await _refreshJournalData();
@@ -234,9 +241,9 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
           .toList()
         ..sort((a, b) => a.latestPhoneTime!.compareTo(b.latestPhoneTime!));
       _latestDrowsyTime = drowsySessions.isNotEmpty ? drowsySessions.last.latestDrowsyTime : null;
-      _latestDrowsyDuration = drowsySessions.isNotEmpty ? drowsySessions.last.latestDrowsyDuration : 0;
+      _latestDrowsyDurationSec = drowsySessions.isNotEmpty ? drowsySessions.last.latestDrowsyDurationSec : 0;
       _latestPhoneTime = phoneSessions.isNotEmpty ? phoneSessions.last.latestPhoneTime : null;
-      _latestPhoneDuration = phoneSessions.isNotEmpty ? phoneSessions.last.latestPhoneDuration : 0;
+      _latestPhoneDurationSec = phoneSessions.isNotEmpty ? phoneSessions.last.latestPhoneDurationSec : 0;
     });
   }
 
@@ -769,7 +776,7 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
             iconPath: 'assets/images/drowsy_icon.png',
             iconBg: const Color(0xFFFFF5E3),
             title: '졸음 감지',
-            subtitle: '${_latestDrowsyTime ?? '-'} · 약 $_latestDrowsyDuration분',
+            subtitle: '${_latestDrowsyTime ?? '-'} · 약 ${_formatDurationSec(_latestDrowsyDurationSec)}',
             count: _dailyData?.drowsyCount ?? 0,
             countBg: const Color(0xFFFFF5E3),
             countColor: const Color(0xFFBF5900),
@@ -779,7 +786,7 @@ class _DailyAnalysisScreenState extends State<DailyAnalysisScreen> {
             iconPath: 'assets/images/smartphone_icon.png',
             iconBg: const Color(0xFFFFEBEC),
             title: '스마트폰 사용',
-            subtitle: '${_latestPhoneTime ?? '-'} · 약 $_latestPhoneDuration분',
+            subtitle: '${_latestPhoneTime ?? '-'} · 약 ${_formatDurationSec(_latestPhoneDurationSec)}',
             count: _dailyData?.phoneCount ?? 0,
             countBg: const Color(0xFFFFEBEC),
             countColor: const Color(0xFFB71D28),

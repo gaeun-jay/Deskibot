@@ -56,11 +56,11 @@ class FocusSessionService {
       drowsyEventCount: drowsy['count'] as int? ?? 0,
       drowsyDuration: _toMinutes(drowsy['duration_sec']),
       latestDrowsyTime: drowsy['latest_at'] as String?,
-      latestDrowsyDuration: _toMinutes(drowsy['latest_duration_sec']),
+      latestDrowsyDurationSec: drowsy['latest_duration_sec'] as int? ?? 0,
       phoneEventCount: phone['count'] as int? ?? 0,
       phoneDuration: _toMinutes(phone['duration_sec']),
       latestPhoneTime: phone['latest_at'] as String?,
-      latestPhoneDuration: _toMinutes(phone['latest_duration_sec']),
+      latestPhoneDurationSec: phone['latest_duration_sec'] as int? ?? 0,
     );
   }
 
