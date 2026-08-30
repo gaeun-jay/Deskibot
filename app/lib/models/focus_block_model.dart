@@ -7,7 +7,15 @@ class FocusBlock {
   final String endTime; // "HH:mm"
   final String sessionType; // 'pomodoro' | 'stopwatch'
   final String label; // 사용자가 수정 가능한 제목 (기본: '뽀모도로'/'스톱워치')
+
+  /// 표시용 실행 시간(분). 반올림이라 25분 세션이 24분 50초여도 25분으로 보인다.
   final int durationMin;
+
+  /// 서버가 준 실행 시간(초) 원본.
+  ///
+  /// "10분 미만은 숨긴다" 같은 경계 판정에는 반드시 이 값을 쓴다. durationMin 은
+  /// 반올림이라 9분 30초가 10분으로 잡혀 기준이 30초씩 밀린다.
+  final int durationSec;
 
   /// 서버의 세션 종료 상태. 'completed' | 'incomplete' | 'interrupted'
   ///
@@ -24,6 +32,7 @@ class FocusBlock {
     required this.sessionType,
     required this.label,
     required this.durationMin,
+    this.durationSec = 0,
     this.status = 'completed',
   });
 
