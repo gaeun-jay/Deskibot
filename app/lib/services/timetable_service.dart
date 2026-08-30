@@ -54,8 +54,10 @@ class TimetableService {
         sessionType: type,
         label: (s['title'] as String?) ??
             (type == 'pomodoro' ? '뽀모도로' : '스톱워치'),
-        // 서버는 초, 타임테이블은 분.
+        // 서버는 초, 타임테이블은 분. 표시는 반올림하고, 경계 판정용 원본 초는
+        // durationSec 으로 따로 넘긴다.
         durationMin: (((s['actual_duration_sec'] as int? ?? 0)) / 60).round(),
+        durationSec: s['actual_duration_sec'] as int? ?? 0,
         // 자리 비움으로 강제 종료된 세션(interrupted)을 구분해 그리기 위함.
         status: s['status'] as String? ?? 'completed',
       ));

@@ -367,8 +367,10 @@ class _TimetableScreenState extends State<TimetableScreen> {
   List<_SessionGroup> _computeGroups(String type) {
     final blocks = _focusBlocks
         .where((b) => b.sessionType == type)
-        // 실제 실행 시간(일시정지 제외)이 10분 미만인 세션은 시각화하지 않음
-        .where((b) => b.durationMin >= 10)
+        // 실제 실행 시간(일시정지 제외)이 10분 미만인 세션은 시각화하지 않음.
+        // 분이 아니라 초로 판정한다 — durationMin 은 반올림이라 9분 30초짜리가
+        // 10분으로 잡혀 기준이 30초 밀린다.
+        .where((b) => b.durationSec >= 10 * 60)
         .toList();
     return _mergeSessions(blocks);
   }
