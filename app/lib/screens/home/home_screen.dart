@@ -66,10 +66,38 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _onTabChanged() {
     if (BottomNavState.index.value != BottomNavState.homeIndex) return;
-    FocusSessionService().refresh().catchError((e) {
-      debugPrint('[집중현황] 갱신 실패: $e');
-      return const <FocusSessionModel>[];
-    });
+    _refreshHome();
+  }
+
+  /// 홈 카드들을 서버에서 다시 불러온다.
+  ///
+  /// 로봇이 음성으로 완료·추가한 할 일은 서버에만 반영되고 앱으로 밀어주는
+  /// 경로가 없다(WSS 는 집중 세션 상태만 나른다). 그래서 홈이 다시 보이는
+  /// 순간에 집중 현황과 함께 할 일 목록도 같이 불러온다. 홈에 머문 채로
+  /// 확인하고 싶을 때는 숨은 새로고침 버튼(할 일 카드 왼쪽 아이콘)에서도
+  /// 같은 경로를 탄다.
+  ///
+  /// [showError] 는 사용자가 직접 눌러 결과를 기다리는 경우에만 켠다.
+  /// 탭을 오갈 때마다 실패 안내가 뜨면 방해만 된다.
+  Future<void> _refreshHome({bool showError = false}) async {
+    final results = await Future.wait([
+      FocusSessionService().refresh().then((_) => true).catchError((e) {
+        debugPrint('[집중현황] 갱신 실패: $e');
+        return false;
+      }),
+      TodoService()
+          .refresh(date: _dateToStr(_viewingDay))
+          .then((_) => true)
+          .catchError((e) {
+        debugPrint('[할일] 갱신 실패: $e');
+        return false;
+      }),
+    ]);
+
+    if (!mounted || !showError || !results.contains(false)) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('새로고침에 실패했습니다')),
+    );
   }
 
   Color _categoryColor(String hex) {
@@ -805,10 +833,19 @@ class _HomeScreenState extends State<HomeScreen> {
         Expanded(
           child: Row(
             children: [
-              Image.asset(
-                'assets/images/todoboard.png',
-                width: 24,
-                height: 24,
+              // 숨은 새로고침 버튼.
+              //
+              // 로봇에서 음성으로 완료 처리한 할 일을 홈에 머문 채 확인할 수
+              // 있게 두되, 눈에 띄는 버튼은 만들지 않기로 했다. 카드 왼쪽
+              // 아이콘을 그대로 탭 영역으로 쓰므로 겉모습은 달라지지 않는다.
+              GestureDetector(
+                onTap: () => _refreshHome(showError: true),
+                behavior: HitTestBehavior.opaque,
+                child: Image.asset(
+                  'assets/images/todoboard.png',
+                  width: 24,
+                  height: 24,
+                ),
               ),
               const SizedBox(width: 2),
               _buildDayArrow(Icons.chevron_left, () => _shiftDay(-1)),
